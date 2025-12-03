@@ -245,10 +245,6 @@
                 const raw = String(parsedData.formatted_response || '');
                 let unescaped = unescapeHtml(raw).trim();
                 
-                // ----------------------------------------------------
-                // ✨ CRITICAL FIX: Strip Markdown Code Block Fences
-                // ----------------------------------------------------
-                // Check and remove leading code block marker (e.g., ```json or ```)
                 if (unescaped.startsWith('```')) {
                     // Find the first newline after the starting backticks
                     const fenceEnd = unescaped.indexOf('\n');
@@ -381,7 +377,7 @@
             errorContainer.classList.add('hidden');
 
             try {
-                const response = await fetchWithRetry('https://aura-style-agent-api.onrender.com', {
+                const response = await fetchWithRetry('https://aura-style-agent-api.onrender.com/api/recommend', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userInput: userChatInput })
