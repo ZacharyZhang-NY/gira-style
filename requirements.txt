@@ -1,0 +1,5 @@
+Flask
+flask-cors
+google-genai
+python-dotenv  # Needed for local testing, but harmless on Render
+gunicorn       # Essential: A production web server for Flask
