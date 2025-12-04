@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personal Style Agent</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            /* Set the background image */
+            background-image: url('https://assets.aritzia.com/image/upload/q_auto,f_auto,dpr_auto,c_fit,h_1920,w_1920/wi25-holiday-wk4-plp-gg-footer-a');
+            background-size: cover; /* Cover the entire background */
+            background-position: center; /* Center the image */
+            background-repeat: no-repeat; /* Do not repeat the image */
+            background-attachment: fixed; /* Keep the background fixed during scroll */
+            background-color: #f8f9fa; /* Fallback color */
+        }
+        /* Custom dotted spinner to match the image style */
+        .spinner-dots {
+            display: inline-block;
+            position: relative;
+            width: 20px;
+            height: 20px;
+        }
+        .spinner-dots div {
+            position: absolute;
+            top: 8px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #fff;
+            animation-timing-function: cubic-bezier(0, 1, 1, 0);
+        }
+        .spinner-dots div:nth-child(1) {
+            left: 0px;
+            animation: spinner-dots1 0.6s infinite;
+        }
+        .spinner-dots div:nth-child(2) {
+            left: 0px;
+            animation: spinner-dots2 0.6s infinite;
+        }
+        .spinner-dots div:nth-child(3) {
+            left: 8px;
+            animation: spinner-dots2 0.6s infinite;
+        }
+        .spinner-dots div:nth-child(4) {
+            left: 16px;
+            animation: spinner-dots3 0.6s infinite;
+        }
+        @keyframes spinner-dots1 {
+            0% { transform: scale(0); }
+            100% { transform: scale(1); }
+        }
+        @keyframes spinner-dots3 {
+            0% { transform: scale(1); }
+            100% { transform: scale(0); }
+        }
+        @keyframes spinner-dots2 {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(8px, 0); }
+        }
+        /* Utility to clamp text to two lines with ellipsis */
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* Recommendation output scroll area to prevent overflowing the card */
+        .recommendation-scroll {
+            max-height: 16rem; /* ~256px */
+            overflow: auto;
+        }
+    </style>
+    <!-- Firebase SDK Imports (Mandatory Setup) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+
+        setLogLevel('error');
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app;
+        let auth;
+        let db;
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+
+            async function authenticate() {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    console.log("Firebase initialized and user authenticated.");
+                } catch (error) {
+                    console.error("Firebase authentication error:", error);
+                }
+            }
+            authenticate();
+        } else {
+             console.warn("Firebase configuration not available. The app will run without persistence.");
+        }
+    </script>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-start p-4 mt-16">
+
+    <!-- Floating Header (Outside the Card) -->
+    <div class="text-center mb-6 z-10">
+        <h1 class="text-3xl md:text-4xl font-bold text-white mb-2 drop-shadow-lg">
+            Aritzia Style Agent
+        </h1>
+        <p class="text-gray-100 text-sm md:text-base drop-shadow-md opacity-90">
+            Get a tailored recommendation with Aritzia essentials.
+        </p>
+    </div>
+
+    <!-- Main Card -->
+    <div class="w-full max-w-md bg-white shadow-2xl rounded-xl p-6 md:p-8">
+        
+        <!-- Input Section -->
+        <div class="mb-6">
+            <label for="userChatInput" class="block text-gray-700 font-medium mb-3">Chat with your Style Agent</label>
+            <textarea 
+                id="userChatInput" 
+                rows="3" 
+                placeholder="e.g, I'm going to go to de Young Museum on Sunday morning, please recommend me an outfit." 
+                class="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-600 placeholder-gray-400 resize-none transition-all"
+            ></textarea>
+        </div>
+
+        <!-- Button -->
+        <button 
+            id="recommendBtn" 
+            onclick="getRecommendation()" 
+            class="w-full bg-[#3b82f6] hover:bg-blue-600 text-white font-medium py-3 rounded-md shadow-md transition duration-200 flex items-center justify-center space-x-2"
+        >
+            <span>Get Outfit Recommendation</span>
+            <!-- Loading Spinner (Hidden by default) -->
+            <div id="loader" class="spinner-dots hidden">
+                <div></div><div></div><div></div><div></div>
+            </div>
+        </button>
+
+        <!-- Result / Output Area (Always visible frame, content filled later) -->
+        <div class="mt-6 border border-blue-300 rounded-md p-4 min-h-[100px] bg-white">
+            <h3 class="text-gray-800 font-medium mb-2"></h3>
+            <div id="recommendationOutput" class="prose prose-sm max-w-none text-gray-600 recommendation-scroll">
+                <!-- LLM Recommendation will be inserted here -->
+            </div>
+            
+            <!-- Error Message inside container -->
+            <div id="errorContainer" class="hidden mt-2 text-sm text-red-600">
+                An error occurred while fetching the recommendation. Please check your inputs and try again.
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const recommendationOutput = document.getElementById('recommendationOutput');
+        const errorContainer = document.getElementById('errorContainer');
+        const recommendBtn = document.getElementById('recommendBtn');
+        const loader = document.getElementById('loader');
+        
+        // Exponential backoff retry logic for API calls
+        async function fetchWithRetry(url, options, maxRetries = 5) {
+            let delay = 1000;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response;
+                } catch (error) {
+                    if (i === maxRetries - 1) {
+                        console.error("Max retries reached. API call failed.", error);
+                        throw error;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                }
+            }
+        }
+
+        function formatOutfitResponse(data) {
+            // Small helper to escape HTML to avoid injection when inserting user/LLM text
+            function escapeHtml(str) {
+                if (str === null || str === undefined) return '';
+                return String(str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/</g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            // Unescape common HTML entities
+            function unescapeHtml(str) {
+                if (str === null || str === undefined) return '';
+                return String(str)
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&#39;/g, "'");
+            }
+
+            let prefaceText = null;
+            let parsedData = data;
+            let html = '';
+
+            if (typeof data === 'string') {
+                const unescaped = unescapeHtml(data).trim();
+                
+                // Try to parse the unescaped string directly
+                if (unescaped.startsWith('{') || unescaped.startsWith('[')) {
+                    try {
+                        parsedData = JSON.parse(unescaped);
+                    } catch (err) {
+                        // Not valid JSON: render as markdown/plain text
+                        return `<div class="prose max-w-none">${marked.parse(escapeHtml(unescaped))}</div>`;
+                    }
+                } else {
+                    // Not a starting JSON block: render as markdown/plain text
+                    return `<div class="prose max-w-none">${marked.parse(escapeHtml(unescaped))}</div>`;
+                }
+            } 
+            else if (parsedData.formatted_response) {
+                const raw = String(parsedData.formatted_response || '');
+                let unescaped = unescapeHtml(raw).trim();
+
+                if (unescaped.startsWith('```')) {
+                    // Find the first newline after the starting backticks
+                    const fenceEnd = unescaped.indexOf('\n');
+                    if (fenceEnd !== -1) {
+                        // Remove the fence and language tag (e.g., ```json\n)
+                        unescaped = unescaped.substring(fenceEnd).trim();
+                    } else {
+                        // Handle case where it's all on one line, just remove the backticks
+                        unescaped = unescaped.replace(/^```[a-z]*\s*/, '').trim();
+                    }
+                }
+                
+                // Check and remove trailing code block marker (e.g., ```)
+                if (unescaped.endsWith('```')) {
+                    unescaped = unescaped.slice(0, -3).trim();
+                }
+
+                // If the cleaned string starts with JSON, try to parse the whole thing
+                if (unescaped.startsWith('{') || unescaped.startsWith('[')) {
+                    try {
+                        parsedData = JSON.parse(unescaped);
+                    } catch (err) {
+                        // Not valid JSON after cleanup; fall back to rendering as markdown/plain text
+                        return `<div class="prose max-w-none">${marked.parse(escapeHtml(unescaped))}</div>`;
+                    }
+                } else {
+                    // If JSON is embedded after some narrative (or if the fence removal left a new line/space),
+                    // find the first JSON start char.
+                    const idxBrace = unescaped.indexOf('{');
+                    const idxBracket = unescaped.indexOf('[');
+                    let startIdx = -1;
+                    if (idxBrace >= 0 && idxBracket >= 0) startIdx = Math.min(idxBrace, idxBracket);
+                    else startIdx = Math.max(idxBrace, idxBracket);
+
+                    if (startIdx >= 0) {
+                        const possiblePreface = unescaped.slice(0, startIdx).trim();
+                        const possibleJson = unescaped.slice(startIdx).trim();
+                        try {
+                            parsedData = JSON.parse(possibleJson);
+                            if (possiblePreface) prefaceText = possiblePreface; 
+                        } catch (err) {
+                            // Can't parse embedded JSON: render whole response as markdown
+                            return `<div class="prose max-w-none">${marked.parse(escapeHtml(unescaped))}</div>`;
+                        }
+                    } else {
+                        // No JSON found; render as markdown/plain text
+                        return `<div class="prose max-w-none">${marked.parse(escapeHtml(unescaped))}</div>`;
+                    }
+                }
+            }
+
+
+            // Use parsedData from now on
+            const finalData = parsedData;
+
+            // Build structured layout according to response.json
+            html += '<div class="space-y-6">';
+
+            // --- Outfit list (Improved Rendering) ---
+            if (Array.isArray(finalData.outfit) && finalData.outfit.length > 0) {
+                html += '<div class="mb-4">';
+                html += '<h3 class="font-bold text-xl text-gray-800 mb-4 flex items-center">👗 Recommended Outfit</h3>';
+                html += '<ul class="space-y-4">';
+
+                finalData.outfit.forEach(item => {
+                    const name = escapeHtml(item.item_name || 'Unknown item');
+                    const color = escapeHtml(item.color || '—');
+                    const reason = escapeHtml(item.reason || '');
+
+                    // The link is now available in the JSON, let's include it
+                    let link = item.link ? String(item.link) : null; 
+                    if (link) {
+                        // Use replace() with a simple string to remove the first occurrence of 'master.'
+                        link = link.replace('master.', '');
+                        link = escapeHtml(link); // Re-escape after modification
+                    }
+
+
+                    // RENDER IMPROVEMENT: Add link and structured block
+                    html += `<li class="p-3 border rounded-lg shadow-sm bg-white">
+                        <div class="text-base font-semibold text-gray-900 mb-1">
+                            ${link ? `<a href="${link}" target="_blank" class="text-blue-600 hover:underline">${name}</a>` : name} 
+                        </div>
+                        <div class="text-sm text-gray-600 mb-2">
+                            <span class="font-medium">Color:</span> ${color}
+                        </div>
+                        ${reason ? `<p class="text-xs text-gray-700 italic border-l-2 border-gray-200 pl-2">
+                            ${reason}
+                        </p>` : ''}
+                    </li>`;
+                });
+                html += '</ul></div>';
+            } else {
+                html += '<div class="text-base text-gray-600">No outfit items returned.</div>';
+            }
+
+            // --- Accessories (Improved Styling) ---
+            if (finalData.accessories_recommend) {
+                html += `<div class="bg-blue-50 border-l-4 border-blue-500 pl-4 py-3 rounded-md">
+                    <h4 class="font-bold text-lg text-gray-800 mb-2 flex items-center">💍 Accessories Recommendation</h4>
+                    <p class="text-gray-700 text-sm">${escapeHtml(finalData.accessories_recommend)}</p>
+                </div>`;
+            }
+
+            // --- Overall Reason (Improved Styling) ---
+            if (finalData.reason) {
+                html += `<div class="bg-green-50 border-l-4 border-green-500 pl-4 py-3 rounded-md">
+                    <h4 class="font-bold text-lg text-gray-800 mb-2 flex items-center">💡 Why This Outfit</h4>
+                    <p class="text-gray-700 text-sm">${escapeHtml(finalData.reason)}</p>
+                </div>`;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        async function getRecommendation() {
+            const userChatInput = document.getElementById('userChatInput').value.trim();
+
+            if (!userChatInput) {
+                alert("Please describe your style needs in the box.");
+                return;
+            }
+
+            // UI Loading State
+            recommendBtn.disabled = true;
+            recommendBtn.querySelector('span').textContent = 'Generating...';
+            loader.classList.remove('hidden');
+            recommendationOutput.innerHTML = '';
+            errorContainer.classList.add('hidden');
+
+            try {
+                const response = await fetchWithRetry('https://aura-style-agent-api.onrender.com/api/recommend', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userInput: userChatInput })
+                });
+                
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    recommendationOutput.innerHTML = formatOutfitResponse(result.data);
+                } else {
+                    errorContainer.innerText = result.error || "Could not generate a recommendation.";
+                    errorContainer.classList.remove('hidden');
+                }
+
+            } catch (error) {
+                console.error("API Call failed:", error);
+                errorContainer.innerText = "Backend server is not running. Please start the backend with: python3 backend.py";
+                errorContainer.classList.remove('hidden');
+            } finally {
+                // Restore button state
+                recommendBtn.disabled = false;
+                recommendBtn.querySelector('span').textContent = 'Get Outfit Recommendation';
+                loader.classList.add('hidden');
+            }
+        }
+
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+        document.head.appendChild(script);
+
+        window.getRecommendation = getRecommendation;
+    </script>
+</body>
+</html>
