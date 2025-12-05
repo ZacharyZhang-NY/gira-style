@@ -63,16 +63,14 @@ def get_recommendation():
         # Create chat with file search tool
         chat = client.chats.create(
             model="gemini-2.5-flash",
-            config={
-                "system_instruction": SYSTEM_INSTRUCTION,
-                "tools": [
-                    types.Tool(
-                        file_search=types.FileSearch(
-                            file_search_store_names=[FILE_SEARCH_STORE_NAME]
-                        )
+            system_instruction=SYSTEM_INSTRUCTION,
+            tools=[
+                types.Tool(
+                    file_search=types.FileSearch(
+                        file_search_store_names=[FILE_SEARCH_STORE_NAME]
                     )
-                ]
-            }
+                )
+            ]
         )
         
         # Send user message
