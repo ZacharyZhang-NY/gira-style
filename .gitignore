@@ -1,6 +1,6 @@
 # .gitignore
 
-.envv
+.env
 .venv/
 .vercel
 .env*.local
