@@ -451,7 +451,7 @@
                 console.error("API Call failed:", error);
                 // Fallback rendering for network/system errors
                 renderResponse({ formatted_response: `An application error occurred: ${error.message}. Please verify the backend Python server is running.` });
-                errorContainer.innerText = `Error: ${error.message}. Ensure the Flask backend is running on port 5001.`;
+                errorContainer.innerText = `Error: ${error.message}. Ensure the Flask backend is running.`;
                 errorContainer.classList.remove('hidden');
             } finally {
                 // Restore UI state
