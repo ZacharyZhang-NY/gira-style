@@ -1,4 +1,9 @@
 # .gitignore
 
-.env
-.venv
+.envv
+.venv/
+.vercel
+.env*.local
+
+# Old/Unused Directories
+legacy/
