@@ -72,9 +72,6 @@ def get_recommendation():
                         )
                     )
                 ],
-                # Add a timeout setting for the API call itself (e.g., 55 seconds)
-                # Vercel functions typically timeout after 60s.
-                "timeout": 55 
             }
         )
         
