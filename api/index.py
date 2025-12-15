@@ -157,6 +157,30 @@ def generate_image():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/test-fetch', methods=['GET'])
+def test_fetch():
+    """Debug endpoint to test image fetching."""
+    test_url = "https://aritzia.scene7.com/is/image/Aritzia/psku9_hi-res/wilfred-free-only-long-sleeve-t-shirt-white-cloth.jpg"
+    try:
+        from util.fetch_image import fetch_image_from_url
+        image_bytes = fetch_image_from_url(test_url)
+        return jsonify({
+            'success': True,
+            'url': test_url,
+            'size_bytes': len(image_bytes),
+            'message': 'Image fetched successfully'
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'url': test_url,
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'traceback': traceback.format_exc()
+        }), 500
+
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""

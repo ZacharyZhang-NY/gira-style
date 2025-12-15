@@ -10,6 +10,11 @@ def fetch_image_from_url(url):
         'Connection': 'keep-alive'
     }
     print(f"Fetching image from: {url}")
-    response = requests.get(url, headers=headers, impersonate="chrome")
-    response.raise_for_status()
-    return response.content
+    try:
+        response = requests.get(url, headers=headers, impersonate="chrome", timeout=30)
+        print(f"Response status: {response.status_code}, Content-Length: {len(response.content)}")
+        response.raise_for_status()
+        return response.content
+    except Exception as e:
+        print(f"curl_cffi fetch error: {type(e).__name__}: {e}")
+        raise
