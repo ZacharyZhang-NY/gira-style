@@ -20,10 +20,6 @@
       "dest": "/api/index.py"
     },
     {
-      "src": "/api/test-fetch",
-      "dest": "/api/index.py"
-    },
-    {
       "src": "/health",
       "dest": "/api/index.py"
     },

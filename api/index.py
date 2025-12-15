@@ -5,7 +5,6 @@ from google.genai import types
 import json
 import os
 import base64
-from util.fetch_image import fetch_image_from_url
 from api.constants import (
     IMG_GEN_MODEL,
     RECOMMENDATION_MODEL,
@@ -97,29 +96,27 @@ def generate_image():
             return jsonify({'error': 'Outfit items unavailable.'}), 400
 
         contents = []
-        failed_items = []
         successful_items = []
         
         for item in outfit_items:
             item_name = item.get('item_name')
-            image_url = item.get('image')
+            image_base64 = item.get('image_base64')
             
-            if image_url:
+            if image_base64 and image_base64.startswith('data:'):
                 try:
-                    print(f"Fetching image for {item_name}: {image_url}")
-                    image_bytes = fetch_image_from_url(image_url)
+                    header, encoded = image_base64.split(',', 1)
+                    mime_type = header.split(':')[1].split(';')[0] if ':' in header else 'image/jpeg'
+                    image_bytes = base64.b64decode(encoded)
+                    
                     contents.append(types.Part.from_text(text=f"This image shows the {item_name}."))
-                    contents.append(types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'))
+                    contents.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
                     successful_items.append(item_name)
+                    print(f"Added image for {item_name}, size: {len(image_bytes)} bytes")
                 except Exception as e:
-                    print(f"Failed to fetch image for {item_name}: {e}")
-                    failed_items.append(item_name)
+                    print(f"Failed to decode base64 for {item_name}: {e}")
         
         if len(successful_items) == 0:
-            return jsonify({'error': 'Failed to fetch any product images. Unable to generate outfit visualization.'}), 500
-        
-        if len(failed_items) > 0:
-            print(f"Continuing with {len(successful_items)} images. Failed to fetch: {', '.join(failed_items)}")
+            return jsonify({'error': 'No valid images received. Unable to generate outfit visualization.'}), 500
 
         item_count = len(successful_items)
         prompt = IMAGE_GEN_PROMPT.format(item_count=item_count)
@@ -155,30 +152,6 @@ def generate_image():
     except Exception as e:
         print(f"Error generating image: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/test-fetch', methods=['GET'])
-def test_fetch():
-    """Debug endpoint to test image fetching."""
-    test_url = "https://aritzia.scene7.com/is/image/Aritzia/psku9_hi-res/wilfred-free-only-long-sleeve-t-shirt-white-cloth.jpg"
-    try:
-        from util.fetch_image import fetch_image_from_url
-        image_bytes = fetch_image_from_url(test_url)
-        return jsonify({
-            'success': True,
-            'url': test_url,
-            'size_bytes': len(image_bytes),
-            'message': 'Image fetched successfully'
-        })
-    except Exception as e:
-        import traceback
-        return jsonify({
-            'success': False,
-            'url': test_url,
-            'error': str(e),
-            'error_type': type(e).__name__,
-            'traceback': traceback.format_exc()
-        }), 500
 
 
 @app.route('/health', methods=['GET'])

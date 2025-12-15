@@ -376,6 +376,23 @@
             chatHistory.scrollTop = chatHistory.scrollHeight;
         }
 
+        async function fetchImageAsBase64(url) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const blob = await response.blob();
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            } catch (error) {
+                console.error(`Failed to fetch image: ${url}`, error);
+                return null;
+            }
+        }
+
         async function generateOutfitImage(outfitData) {
             const items = [
                 ...(outfitData.outfit || []),
@@ -388,11 +405,24 @@
                 return { error: "No valid product images available to generate visualization." };
             }
 
+            const itemsWithBase64 = await Promise.all(
+                validItems.map(async (item) => {
+                    const base64 = await fetchImageAsBase64(item.image);
+                    return {
+                        item_name: item.item_name,
+                        image_base64: base64
+                    };
+                })
+            );
+
+            const successfulItems = itemsWithBase64.filter(item => item.image_base64);
+            
+            if (successfulItems.length === 0) {
+                return { error: "Could not fetch any product images from browser." };
+            }
+
             const payload = {
-                outfit_items: validItems.map(item => ({
-                    item_name: item.item_name,
-                    image: item.image
-                }))
+                outfit_items: successfulItems
             };
 
             try {
