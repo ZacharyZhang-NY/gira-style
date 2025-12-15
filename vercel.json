@@ -4,6 +4,10 @@
     {
       "src": "api/index.py",
       "use": "@vercel/python"
+    },
+    {
+      "src": "artizia.html",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -12,8 +16,16 @@
       "dest": "/api/index.py"
     },
     {
+      "src": "/api/generate-image",
+      "dest": "/api/index.py"
+    },
+    {
       "src": "/health",
       "dest": "/api/index.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/artizia.html"
     }
   ]
 }

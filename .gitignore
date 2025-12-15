@@ -1,9 +1,29 @@
-# .gitignore
-
+# Environment
 .env
-.venv/
-.vercel
 .env*.local
+.venv/
+venv/
 
-# Old/Unused Directories
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Vercel
+.vercel
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Old/Unused
 legacy/

@@ -1,2 +1,2 @@
 # aura_style_agent
-An agent to help your customer pick the best fit style
+An agent to help your customer pick the best outfit.

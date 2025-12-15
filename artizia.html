@@ -4,24 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aritzia Style Agent Chat</title>
-    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- NEW: Load Marked library for parsing markdown and handling text fallback -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <!-- Use Inter font -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body {
             font-family: 'Inter', sans-serif;
-            /* Set the background image */
             background-image: url('https://assets.aritzia.com/image/upload/q_auto,f_auto,dpr_auto,c_fit,h_1920,w_1920/wi25-holiday-wk4-plp-gg-footer-a');
-            background-size: cover; /* Cover the entire background */
-            background-position: center; /* Center the image */
-            background-repeat: no-repeat; /* Do not repeat the image */
-            background-attachment: fixed; /* Keep the background fixed during scroll */
-            background-color: #f8f9fa; /* Fallback color */
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+            background-color: #f8f9fa;
         }
-        /* Custom dotted spinner */
         .spinner-dots {
             display: inline-block;
             position: relative;
@@ -34,12 +29,10 @@
             width: 4px;
             height: 4px;
             border-radius: 50%;
-            background: #4F46E5; /* Use a primary color for visibility */
+            background: #4F46E5;
             animation-timing-function: cubic-bezier(0, 1, 1, 0);
         }
-        /* Override default spinner colors to match the app's accent */
         .spinner-dots.text-white div { background: #fff; }
-
         .spinner-dots div:nth-child(1) { left: 0px; animation: spinner-dots1 0.6s infinite; }
         .spinner-dots div:nth-child(2) { left: 0px; animation: spinner-dots2 0.6s infinite; }
         .spinner-dots div:nth-child(3) { left: 8px; animation: spinner-dots2 0.6s infinite; }
@@ -60,7 +53,6 @@
 </head>
 <body class="min-h-screen flex flex-col items-center justify-start p-4 pt-8">
 
-    <!-- Floating Header (Outside the Card) -->
     <div class="text-center mb-6 z-10">
         <h1 class="text-3xl md:text-4xl font-bold text-white mb-2 drop-shadow-lg">
             Aritzia Style Agent Chat
@@ -70,22 +62,17 @@
         </p>
     </div>
 
-    <!-- Main Chat Container Card -->
     <div class="w-full max-w-md bg-white shadow-2xl rounded-xl flex flex-col h-[70vh] md:h-[80vh]">
         
-        <!-- Chat History Area (Scrollable) -->
         <div id="chatHistory" class="flex-grow overflow-y-auto p-4 space-y-4">
-            <!-- Initial welcome message -->
             <div class="flex justify-start">
                 <div class="bg-blue-50 text-gray-700 p-3 rounded-lg max-w-[80%] shadow-sm">
                     <p class="font-semibold text-blue-800 mb-1">Style Agent</p>
                     <p class="text-sm">Welcome! Tell me about the event, location, weather, and your preferences (e.g., color, style, comfort) for an Aritzia-inspired outfit recommendation!</p>
                 </div>
             </div>
-            <!-- Messages will be appended here -->
         </div>
         
-        <!-- Typing Indicator / Loader Footer -->
         <div id="typingIndicator" class="hidden p-2 bg-gray-50 border-t border-gray-200">
             <div class="flex items-center space-x-2 text-sm text-gray-500">
                 <div class="spinner-dots text-indigo-500 !w-8 !h-4">
@@ -95,7 +82,6 @@
             </div>
         </div>
 
-        <!-- Input Section (Fixed Footer) -->
         <div class="p-4 bg-gray-100 border-t border-gray-200">
             <textarea 
                 id="userChatInput" 
@@ -124,11 +110,41 @@
         const typingIndicator = document.getElementById('typingIndicator');
         const errorContainer = document.getElementById('errorContainer');
         
-        // Define the Flask API endpoint
-        // This MUST match the port and route defined in backend.py
-        const FLASK_API_URL = 'https://aura-style-agent.vercel.app/api/recommend';
+        let FLASK_API_URL = '/api/recommend';
+        let GENERATE_IMAGE_API_URL = '/api/generate-image';
 
-        // Helper function for user message display
+        function determineBackendUrl(endpoint) {
+            const loc = window.location;
+            
+            // Production: Vercel deployment
+            if (loc.hostname === 'aura-style-agent.vercel.app' || loc.hostname.endsWith('.vercel.app')) {
+                return `https://aura-style-agent.vercel.app${endpoint}`;
+            }
+            
+            // Development: localhost
+            if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') {
+                if (loc.port && loc.port !== '5001') {
+                    return `http://${loc.hostname}:5001${endpoint}`;
+                }
+            }
+            
+            // Development: GitHub Codespaces
+            const codespacePattern = /-(\d+)\.app\.github\.dev$/;
+            const match = loc.hostname.match(codespacePattern);
+            if (match) {
+                const currentPort = match[1];
+                if (currentPort !== '5001') {
+                    const newHostname = loc.hostname.replace(codespacePattern, '-5001.app.github.dev');
+                    return `https://${newHostname}${endpoint}`;
+                }
+            }
+
+            return endpoint;
+        }
+
+        FLASK_API_URL = determineBackendUrl('/api/recommend');
+        GENERATE_IMAGE_API_URL = determineBackendUrl('/api/generate-image');
+
         function renderUserMessage(message) {
             const messageEl = document.createElement('div');
             messageEl.className = 'flex justify-end';
@@ -141,24 +157,17 @@
             chatHistory.scrollTop = chatHistory.scrollHeight;
         }
 
-        /**
-         * The unified function to parse the LLM's response (which might be JSON, 
-         * JSON wrapped in a code block, or plain text) and generate the HTML.
-         */
         function formatOutfitResponse(data) {
-            // Small helper to escape HTML to avoid injection when inserting user/LLM text
             function escapeHtml(str) {
                 if (str === null || str === undefined) return '';
-                // Note: marked handles escaping for the main content, this is for surrounding data like names/reasons
                 return String(str)
                     .replace(/&/g, '&amp;')
                     .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;') // Corrected this closing bracket
+                    .replace(/>/g, '&gt;')
                     .replace(/"/g, '&quot;')
                     .replace(/'/g, '&#39;');
             }
 
-            // Unescape common HTML entities
             function unescapeHtml(str) {
                 if (str === null || str === undefined) return '';
                 return String(str)
@@ -173,29 +182,22 @@
             let parsedData = data;
             let html = '';
 
-            // CASE 1: Data is a direct string response (unlikely with Flask API, but robust)
             if (typeof data === 'string') {
                 const unescaped = unescapeHtml(data).trim();
                 
-                // Try to parse the unescaped string directly
                 if (unescaped.startsWith('{') || unescaped.startsWith('[')) {
                     try {
                         parsedData = JSON.parse(unescaped);
                     } catch (err) {
-                        // Not valid JSON: render as markdown/plain text
                         return `<div class="prose max-w-none">${marked.parse(unescaped)}</div>`;
                     }
                 } else {
-                    // Not a starting JSON block: render as markdown/plain text
                     return `<div class="prose max-w-none">${marked.parse(unescaped)}</div>`;
                 }
-            } 
-            // CASE 2: Data is the structured response object, possibly containing 'formatted_response'
-            else if (parsedData.formatted_response) {
+            } else if (parsedData.formatted_response) {
                 const raw = String(parsedData.formatted_response || '');
                 let unescaped = unescapeHtml(raw).trim();
 
-                // 1. Remove optional code block markers (```json)
                 if (unescaped.startsWith('```')) {
                     const fenceEnd = unescaped.indexOf('\n');
                     if (fenceEnd !== -1) {
@@ -205,21 +207,17 @@
                     }
                 }
                 
-                // 2. Remove trailing code block marker (```)
                 if (unescaped.endsWith('```')) {
                     unescaped = unescaped.slice(0, -3).trim();
                 }
 
-                // 3. Try to find/parse embedded JSON
                 if (unescaped.startsWith('{') || unescaped.startsWith('[')) {
                     try {
                         parsedData = JSON.parse(unescaped);
                     } catch (err) {
-                        // Not valid JSON after cleanup; fall back to rendering as markdown/plain text
                         return `<div class="prose max-w-none">${marked.parse(unescaped)}</div>`;
                     }
                 } else {
-                    // Try to find JSON embedded after narrative text
                     const idxBrace = unescaped.indexOf('{');
                     const idxBracket = unescaped.indexOf('[');
                     let startIdx = -1;
@@ -233,23 +231,17 @@
                             parsedData = JSON.parse(possibleJson);
                             if (possiblePreface) prefaceText = possiblePreface; 
                         } catch (err) {
-                            // Can't parse embedded JSON: render whole response as markdown
                             return `<div class="prose max-w-none">${marked.parse(unescaped)}</div>`;
                         }
                     } else {
-                        // No JSON found; render as markdown/plain text
                         return `<div class="prose max-w-none">${marked.parse(unescaped)}</div>`;
                     }
                 }
             }
-            // If we reach here, parsedData is expected to be a valid JSON object (or the original data object if no parsing was needed)
 
             const finalData = parsedData;
-
-            // Start building the structured layout
             html += '<div class="space-y-6">';
 
-            // --- Preface Text (if extracted) or Situation Description ---
             if (prefaceText) {
                  html += `<div class="bg-gray-100 p-3 rounded-lg mb-4">
                      <p class="text-sm text-gray-700">${marked.parse(prefaceText)}</p>
@@ -260,8 +252,6 @@
                 </div>`;
             }
 
-
-            // --- Outfit list ---
             if (Array.isArray(finalData.outfit) && finalData.outfit.length > 0) {
                 html += '<div class="mb-4">';
                 html += '<h3 class="font-bold text-lg text-gray-800 mb-3 flex items-center">👗 Recommended Outfit</h3>';
@@ -272,36 +262,22 @@
                     const color = escapeHtml(item.color || '—');
                     const sku = escapeHtml(item.sku || '—');
                     const reason = escapeHtml(item.reason || '');
-
-                    // Assume the item might contain an image_url. Use a placeholder if missing.
-                    // The placeholder text is derived from the item name (first two words)
                     const placeholderText = name.split(' ').slice(0, 2).join('+').toUpperCase();
-                    // Use a placeholder URL for demonstration. Replace with item.image_url for live data.
                     const imageUrl = escapeHtml(item.image || `https://placehold.co/100x150/f0f9ff/1d4ed8?text=${placeholderText}`);
 
-
-                    // Clean and escape the link
                     let link = item.link ? String(item.link) : null; 
                     if (link && link.startsWith('http')) {
-                        // Optional: clean up common master subdomain if present
                         link = link.replace('master.', '');
                         link = escapeHtml(link); 
                     } else {
-                        link = null; // Ensure only valid links are used
+                        link = null;
                     }
 
-                    // RENDER STRUCTURE - Now using Flexbox for image layout
                     html += `<li class="p-3 border rounded-lg shadow-sm bg-white flex space-x-3 items-start">
-                        <!-- Image Container -->
                         <div class="flex-shrink-0 w-16 h-24 sm:w-20 sm:h-28 overflow-hidden rounded-md bg-gray-100">
-                            <img src="${imageUrl}" 
-                                alt="${name}" 
-                                class="w-full h-full object-cover" 
-                                onerror="this.onerror=null;this.src='[https://placehold.co/100x150/f0f9ff/1d4ed8?text=NO+IMG](https://placehold.co/100x150/f0f9ff/1d4ed8?text=NO+IMG)';"
-                            >
+                            <img src="${imageUrl}" alt="${name}" class="w-full h-full object-cover" 
+                                onerror="this.onerror=null;this.src='https://placehold.co/100x150/f0f9ff/1d4ed8?text=NO+IMG';">
                         </div>
-
-                        <!-- Details Container -->
                         <div class="flex-grow min-w-0">
                             <div class="text-base font-semibold text-gray-900 mb-1 leading-tight">
                                 ${link ? `<a href="${link}" target="_blank" class="text-blue-600 hover:underline transition duration-150">${name}</a>` : name} 
@@ -309,61 +285,48 @@
                             <div class="text-xs text-gray-500 mb-2">
                                 Color: <span class="font-medium">${color}</span> | SKU: ${sku}
                             </div>
-                            ${reason ? `<p class="text-xs text-gray-700 italic border-l-2 border-gray-200 pl-2">
-                                ${reason}
-                            </p>` : ''}
+                            ${reason ? `<p class="text-xs text-gray-700 italic border-l-2 border-gray-200 pl-2">${reason}</p>` : ''}
                         </div>
                     </li>`;
                 });
-                finalData.accessories.forEach(item => {
-                    const name = escapeHtml(item.item_name || 'Unknown item');
-                    const color = escapeHtml(item.color || '—');
-                    const sku = escapeHtml(item.sku || '—');
 
-                    // Assume the item might contain an image_url. Use a placeholder if missing.
-                    // The placeholder text is derived from the item name (first two words)
-                    const placeholderText = name.split(' ').slice(0, 2).join('+').toUpperCase();
-                    // Use a placeholder URL for demonstration. Replace with item.image_url for live data.
-                    const imageUrl = escapeHtml(item.image || `https://placehold.co/100x150/f0f9ff/1d4ed8?text=${placeholderText}`);
+                if (Array.isArray(finalData.accessories)) {
+                    finalData.accessories.forEach(item => {
+                        const name = escapeHtml(item.item_name || 'Unknown item');
+                        const color = escapeHtml(item.color || '—');
+                        const sku = escapeHtml(item.sku || '—');
+                        const placeholderText = name.split(' ').slice(0, 2).join('+').toUpperCase();
+                        const imageUrl = escapeHtml(item.image || `https://placehold.co/100x150/f0f9ff/1d4ed8?text=${placeholderText}`);
 
+                        let link = item.link ? String(item.link) : null; 
+                        if (link && link.startsWith('http')) {
+                            link = link.replace('master.', '');
+                            link = escapeHtml(link); 
+                        } else {
+                            link = null;
+                        }
 
-                    // Clean and escape the link
-                    let link = item.link ? String(item.link) : null; 
-                    if (link && link.startsWith('http')) {
-                        link = link.replace('master.', '');
-                        link = escapeHtml(link); 
-                    } else {
-                        link = null; // Ensure only valid links are used
-                    }
-
-                    // RENDER STRUCTURE - Now using Flexbox for image layout
-                    html += `<li class="p-3 border rounded-lg shadow-sm bg-white flex space-x-3 items-start">
-                        <!-- Image Container -->
-                        <div class="flex-shrink-0 w-16 h-24 sm:w-20 sm:h-28 overflow-hidden rounded-md bg-gray-100">
-                            <img src="${imageUrl}" 
-                                alt="${name}" 
-                                class="w-full h-full object-cover" 
-                                onerror="this.onerror=null;this.src='[https://placehold.co/100x150/f0f9ff/1d4ed8?text=NO+IMG](https://placehold.co/100x150/f0f9ff/1d4ed8?text=NO+IMG)';"
-                            >
-                        </div>
-
-                        <!-- Details Container -->
-                        <div class="flex-grow min-w-0">
-                            <div class="text-base font-semibold text-gray-900 mb-1 leading-tight">
-                                ${link ? `<a href="${link}" target="_blank" class="text-blue-600 hover:underline transition duration-150">${name}</a>` : name} 
+                        html += `<li class="p-3 border rounded-lg shadow-sm bg-white flex space-x-3 items-start">
+                            <div class="flex-shrink-0 w-16 h-24 sm:w-20 sm:h-28 overflow-hidden rounded-md bg-gray-100">
+                                <img src="${imageUrl}" alt="${name}" class="w-full h-full object-cover" 
+                                    onerror="this.onerror=null;this.src='https://placehold.co/100x150/f0f9ff/1d4ed8?text=NO+IMG';">
                             </div>
-                            <div class="text-xs text-gray-500 mb-2">
-                                Color: <span class="font-medium">${color}</span> | SKU: ${sku}
+                            <div class="flex-grow min-w-0">
+                                <div class="text-base font-semibold text-gray-900 mb-1 leading-tight">
+                                    ${link ? `<a href="${link}" target="_blank" class="text-blue-600 hover:underline transition duration-150">${name}</a>` : name} 
+                                </div>
+                                <div class="text-xs text-gray-500 mb-2">
+                                    Color: <span class="font-medium">${color}</span> | SKU: ${sku}
+                                </div>
                             </div>
-                        </div>
-                    </li>`;
-                });
+                        </li>`;
+                    });
+                }
                 html += '</ul></div>';
-            } else if (!prefaceText) { // If it wasn't a narrative text fallback, show a message
+            } else if (!prefaceText) {
                 html += '<div class="text-base text-gray-600 border-l-4 border-red-300 pl-3 py-1">The agent could not determine a complete outfit based on your request.</div>';
             }
 
-            // --- Accessories ---
             if (finalData.other_recommendation) {
                 html += `<div class="bg-blue-50 border-l-4 border-blue-500 pl-4 py-3 rounded-md">
                     <h4 class="font-bold text-sm text-blue-700 mb-1">💍 Other recommendation</h4>
@@ -371,7 +334,6 @@
                 </div>`;
             }
 
-            // --- Overall Reason ---
             if (finalData.reason) {
                 html += `<div class="bg-gray-100 border-l-4 border-gray-400 pl-4 py-3 rounded-md">
                     <h4 class="font-bold text-sm text-gray-800 mb-1">💡 Overall Style Note</h4>
@@ -383,22 +345,90 @@
             return html;
         }
 
-
-        /**
-         * Wraps the content generation in a chat bubble container.
-         * @param {Object} data - The raw data object returned by the Flask API.
-         */
         function renderResponse(data) {
             const messageEl = document.createElement('div');
             messageEl.className = 'flex justify-start';
-            
-            // Generate the content using the robust parser
             const contentHtml = formatOutfitResponse(data);
 
             messageEl.innerHTML = `
                 <div class="bg-blue-50 text-gray-700 p-4 rounded-lg max-w-[95%] shadow-md text-sm">
-                    <p class="font-semibold text-blue-800 mb-3">Style Agent Response</p>
                     ${contentHtml}
+                </div>
+            `;
+            chatHistory.appendChild(messageEl);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        function renderGeneratedImage(imageData) {
+            const messageEl = document.createElement('div');
+            messageEl.className = 'flex justify-start';
+            messageEl.innerHTML = `
+                <div class="bg-purple-50 text-gray-700 p-4 rounded-lg max-w-[95%] shadow-md text-sm mt-2 border border-purple-100">
+                    <p class="font-semibold text-purple-800 mb-3 flex items-center">
+                        <span>✨ Here's how your outfit could look!</span>
+                    </p>
+                    <div class="rounded-lg overflow-hidden shadow-lg relative group">
+                        <img src="${imageData}" alt="Generated Outfit" class="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105">
+                    </div>
+                </div>
+            `;
+            chatHistory.appendChild(messageEl);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        async function generateOutfitImage(outfitData) {
+            const items = [
+                ...(outfitData.outfit || []),
+                ...(outfitData.accessories || [])
+            ];
+
+            const validItems = items.filter(item => item.image && item.image.startsWith('http'));
+
+            if (validItems.length === 0) {
+                return { error: "No valid product images available to generate visualization." };
+            }
+
+            const payload = {
+                outfit_items: validItems.map(item => ({
+                    item_name: item.item_name,
+                    image: item.image
+                }))
+            };
+
+            try {
+                const response = await fetch(GENERATE_IMAGE_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    return { error: result.error || `HTTP error ${response.status}` };
+                }
+                
+                if (result.success && result.image_data) {
+                    return result;
+                } else if (result.error) {
+                    return { error: result.error };
+                } else {
+                    return { error: "Unexpected response format from image generation API." };
+                }
+            } catch (error) {
+                return { error: `Network error: ${error.message}` };
+            }
+        }
+
+        function renderImageGenerationError(errorMessage) {
+            const messageEl = document.createElement('div');
+            messageEl.className = 'flex justify-start';
+            messageEl.innerHTML = `
+                <div class="bg-red-50 text-gray-700 p-3 rounded-lg max-w-[95%] shadow-sm text-sm mt-2 border border-red-200">
+                    <p class="font-semibold text-red-700 mb-1 flex items-center">
+                        <span>⚠️ Image Generation Failed</span>
+                    </p>
+                    <p class="text-xs text-red-600">${errorMessage}</p>
                 </div>
             `;
             chatHistory.appendChild(messageEl);
@@ -415,16 +445,13 @@
                 return;
             }
 
-            // 1. Render User Message & Clear Input
             renderUserMessage(userQuery);
             userChatInput.value = '';
             errorContainer.classList.add('hidden');
 
-            // 2. UI Loading State
             sendBtn.disabled = true;
             typingIndicator.classList.remove('hidden');
             
-            // 3. API Call Setup (Targeting the Flask backend)
             const payload = { userInput: userQuery };
 
             try {
@@ -434,27 +461,67 @@
                     body: JSON.stringify(payload)
                 });
                 
+                const contentType = response.headers.get("content-type");
+                if (contentType && contentType.indexOf("application/json") === -1) {
+                     const text = await response.text();
+                     throw new Error(`API returned ${contentType} instead of JSON. Response: ${text.substring(0, 50)}...`);
+                }
+
                 const result = await response.json();
 
                 if (!response.ok || result.error) {
-                    // Handle HTTP error or application-level error returned by Flask
                     const errorMessage = result.error || `HTTP error! Status: ${response.status}`;
                     throw new Error(errorMessage);
                 }
 
                 const responseData = result.data;
-                
-                // Use the new unified renderer which handles all JSON/text cases
                 renderResponse(responseData);
 
+                if (responseData.outfit && responseData.outfit.length > 0) {
+                    const imageLoaderId = 'img-loader-' + Date.now();
+                    const loaderEl = document.createElement('div');
+                    loaderEl.id = imageLoaderId;
+                    loaderEl.className = 'flex justify-start mt-2 pl-2';
+                    loaderEl.innerHTML = `
+                        <div class="bg-purple-50 p-3 rounded-lg shadow-sm flex items-center space-x-3 border border-purple-100">
+                            <div class="spinner-dots text-purple-500 !w-6 !h-3">
+                                <div class="!bg-purple-500"></div><div class="!bg-purple-500"></div><div class="!bg-purple-500"></div><div class="!bg-purple-500"></div>
+                            </div>
+                            <span class="text-xs text-purple-700 font-medium">Generating outfit visualization...</span>
+                        </div>
+                    `;
+                    chatHistory.appendChild(loaderEl);
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+
+                    generateOutfitImage(responseData).then(result => {
+                        const loader = document.getElementById(imageLoaderId);
+                        if (loader) loader.remove();
+
+                        if (result && result.image_data) {
+                            renderGeneratedImage(result.image_data);
+                        } else if (result && result.error) {
+                            renderImageGenerationError(result.error);
+                        } else {
+                            renderImageGenerationError("Unknown error occurred during image generation.");
+                        }
+                    });
+                }
+
             } catch (error) {
-                console.error("API Call failed:", error);
-                // Fallback rendering for network/system errors
-                renderResponse({ formatted_response: `An application error occurred: ${error.message}. Please verify the backend Python server is running.` });
-                errorContainer.innerText = `Error: ${error.message}. Ensure the Flask backend is running.`;
+                let errorMessage = error.message;
+                if (error.message === 'Failed to fetch') {
+                    const loc = window.location;
+                    if (loc.hostname.includes('.app.github.dev')) {
+                        errorMessage = `Network error: Cannot reach the backend API. In GitHub Codespaces, ensure port 5001 is set to 'Public' visibility.`;
+                    } else {
+                        errorMessage = `Network error: Cannot reach the backend API. Please ensure the Flask server is running on port 5001.`;
+                    }
+                }
+                
+                renderResponse({ formatted_response: `An application error occurred: ${errorMessage}` });
+                errorContainer.innerText = `Error: ${errorMessage}`;
                 errorContainer.classList.remove('hidden');
             } finally {
-                // Restore UI state
                 sendBtn.disabled = false;
                 typingIndicator.classList.add('hidden');
                 userChatInput.focus();
