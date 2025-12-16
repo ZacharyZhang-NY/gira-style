@@ -20,3 +20,21 @@ RECOMMENDATION_PROMPT = (
     f"User order history: {ORDER_HISTORY}. "
     f"User list: {MY_LIST}. "
 )
+
+FOLLOW_UP_PROMPT = """
+The user previously received this outfit recommendation:
+
+{previous_recommendation}
+
+Now the user wants to modify this outfit with the following request:
+"{user_request}"
+
+IMPORTANT INSTRUCTIONS:
+1. Identify which specific item(s) the user wants to change
+2. KEEP ALL OTHER ITEMS FROM THE PREVIOUS RECOMMENDATION EXACTLY THE SAME (same SKU, color, link, image)
+3. ONLY replace the item(s) the user specifically mentioned
+4. Return the complete updated outfit in the same JSON format
+5. Make sure all items exist in the database - DO NOT make up items
+
+Return the full updated outfit JSON with the modification applied.
+"""

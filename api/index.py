@@ -5,10 +5,17 @@ from google.genai import types
 import json
 import os
 import base64
+import uuid
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from api.constants import (
     IMG_GEN_MODEL,
     RECOMMENDATION_MODEL,
     RECOMMENDATION_PROMPT,
+    FOLLOW_UP_PROMPT,
     FILE_SEARCH_STORE_NAME,
     IMAGE_GEN_PROMPT
 )
@@ -23,29 +30,92 @@ if not GEMINI_API_KEY:
 else:
     client = genai.Client(api_key=GEMINI_API_KEY)
 
+# In-memory session storage for conversation context
+# Key: session_id, Value: { 'last_recommendation': {...}, 'history': [...] }
+sessions = {}
+
 
 @app.route('/')
 def serve_frontend():
     return send_from_directory(os.getcwd(), 'artizia.html')
 
 
+@app.route('/api/session', methods=['POST'])
+def create_session():
+    """Create a new conversation session."""
+    session_id = str(uuid.uuid4())
+    sessions[session_id] = {
+        'last_recommendation': None,
+        'history': []
+    }
+    return jsonify({'success': True, 'sessionId': session_id})
+
+
+@app.route('/api/session/<session_id>', methods=['DELETE'])
+def clear_session(session_id):
+    """Clear a conversation session."""
+    if session_id in sessions:
+        del sessions[session_id]
+    return jsonify({'success': True})
+
+
+def is_follow_up_request(user_input):
+    """Detect if the user input is a follow-up/modification request."""
+    follow_up_keywords = [
+        'change', 'swap', 'replace', 'different', 'another', 'instead',
+        'modify', 'update', 'switch', 'prefer', 'don\'t like', 'not like',
+        'something else', 'other option', 'alternative', 'warmer', 'cooler',
+        'more casual', 'more formal', 'less', 'more', 'keep the', 'but'
+    ]
+    user_lower = user_input.lower()
+    return any(keyword in user_lower for keyword in follow_up_keywords)
+
+
 @app.route('/api/recommend', methods=['POST'])
 def get_recommendation():
-    """Get outfit recommendation from the Aritzia agent."""
+    """Get outfit recommendation from the Aritzia agent - Multi-stage approach."""
     if not client:
         return jsonify({'error': 'Gemini client not initialized (API key missing)'}), 500
 
     try:
         data = request.json
         user_input = data.get('userInput', '').strip()
+        session_id = data.get('sessionId', '')
         
         if not user_input:
             return jsonify({'error': 'User input is required'}), 400
         
+        # Get or create session
+        if session_id and session_id in sessions:
+            session = sessions[session_id]
+        else:
+            session_id = str(uuid.uuid4())
+            session = {'last_recommendation': None, 'history': []}
+            sessions[session_id] = session
+        
+        # Determine if this is a follow-up request
+        has_previous = session['last_recommendation'] is not None
+        is_follow_up = has_previous and is_follow_up_request(user_input)
+        
+        # Build the prompt based on context
+        if is_follow_up:
+            # Multi-stage: Include previous recommendation in context
+            previous_json = json.dumps(session['last_recommendation'], indent=2)
+            context_prompt = FOLLOW_UP_PROMPT.format(
+                previous_recommendation=previous_json,
+                user_request=user_input
+            )
+            system_prompt = RECOMMENDATION_PROMPT
+        else:
+            # Fresh request
+            context_prompt = user_input
+            system_prompt = RECOMMENDATION_PROMPT
+        
+        # Create chat and send message
         chat = client.chats.create(
             model=RECOMMENDATION_MODEL,
             config={
-                "system_instruction": RECOMMENDATION_PROMPT,
+                "system_instruction": system_prompt,
                 "tools": [
                     types.Tool(
                         file_search=types.FileSearch(
@@ -56,7 +126,7 @@ def get_recommendation():
             }
         )
         
-        response = chat.send_message(user_input)
+        response = chat.send_message(context_prompt)
         response_text = response.text
         
         cleaned_text = response_text.strip()
@@ -72,10 +142,14 @@ def get_recommendation():
         
         try:
             outfit_data = json.loads(cleaned_text)
-            return jsonify({'success': True, 'data': outfit_data})
+            # Store recommendation in session for follow-ups
+            session['last_recommendation'] = outfit_data
+            session['history'].append({'role': 'user', 'content': user_input})
+            session['history'].append({'role': 'assistant', 'content': outfit_data})
+            return jsonify({'success': True, 'data': outfit_data, 'sessionId': session_id})
         except json.JSONDecodeError:
             print(f"JSONDecodeError: Raw response was {response_text}")
-            return jsonify({'success': True, 'data': {'formatted_response': response_text}})
+            return jsonify({'success': True, 'data': {'formatted_response': response_text}, 'sessionId': session_id})
         
     except Exception as e:
         print(f"Error: {str(e)}")

@@ -90,13 +90,23 @@
                 class="w-full p-3 mb-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none transition-all text-sm"
                 onkeypress="if(event.keyCode==13 && !event.shiftKey) { event.preventDefault(); sendMessage(); }"
             ></textarea>
-            <button 
-                id="sendBtn" 
-                onclick="sendMessage()" 
-                class="w-full bg-[#3b82f6] hover:bg-blue-600 text-white font-medium py-2 rounded-lg shadow-md transition duration-200 flex items-center justify-center space-x-2"
-            >
-                <span>Send Message</span>
-            </button>
+            <div class="flex items-center space-x-2">
+                <button 
+                    id="sendBtn" 
+                    onclick="sendMessage()" 
+                    class="flex-1 bg-[#3b82f6] hover:bg-blue-600 text-white font-medium py-2 rounded-lg shadow-md transition duration-200 flex items-center justify-center"
+                >
+                    <span>Send Message</span>
+                </button>
+                <button 
+                    id="clearBtn" 
+                    onclick="clearConversation()" 
+                    class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded-lg transition duration-200"
+                    title="New Conversation"
+                >
+                    🔄
+                </button>
+            </div>
             <div id="errorContainer" class="hidden mt-2 text-xs text-red-600 text-center">
                 An error occurred. Please check your inputs and ensure the Python backend is running.
             </div>
@@ -109,6 +119,9 @@
         const sendBtn = document.getElementById('sendBtn');
         const typingIndicator = document.getElementById('typingIndicator');
         const errorContainer = document.getElementById('errorContainer');
+        
+        // Session ID for multi-stage conversation context
+        let currentSessionId = null;
         
         let FLASK_API_URL = '/api/recommend';
         let GENERATE_IMAGE_API_URL = '/api/generate-image';
@@ -482,7 +495,11 @@
             sendBtn.disabled = true;
             typingIndicator.classList.remove('hidden');
             
-            const payload = { userInput: userQuery };
+            // Build payload with session ID for multi-stage context
+            const payload = { 
+                userInput: userQuery,
+                sessionId: currentSessionId
+            };
 
             try {
                 const response = await fetch(FLASK_API_URL, {
@@ -502,6 +519,11 @@
                 if (!response.ok || result.error) {
                     const errorMessage = result.error || `HTTP error! Status: ${response.status}`;
                     throw new Error(errorMessage);
+                }
+
+                // Store session ID returned from backend
+                if (result.sessionId) {
+                    currentSessionId = result.sessionId;
                 }
 
                 const responseData = result.data;
@@ -559,6 +581,25 @@
         }
 
         window.sendMessage = sendMessage;
+        
+        function clearConversation() {
+            // Clear session ID to start a new conversation
+            currentSessionId = null;
+            
+            // Clear chat UI except for the welcome message
+            chatHistory.innerHTML = `
+                <div class="flex justify-start">
+                    <div class="bg-blue-50 text-gray-700 p-3 rounded-lg max-w-[80%] shadow-sm">
+                        <p class="font-semibold text-blue-800 mb-1">Style Agent</p>
+                        <p class="text-sm">Welcome! Tell me about the event, location, weather, and your preferences (e.g., color, style, comfort) for an Aritzia-inspired outfit recommendation!</p>
+                    </div>
+                </div>
+            `;
+            
+            userChatInput.focus();
+        }
+        
+        window.clearConversation = clearConversation;
     </script>
 </body>
 </html>
