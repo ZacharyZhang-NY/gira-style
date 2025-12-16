@@ -22,19 +22,20 @@ RECOMMENDATION_PROMPT = (
 )
 
 FOLLOW_UP_PROMPT = """
-The user previously received this outfit recommendation:
+Here is the conversation history with previous outfit recommendations:
 
-{previous_recommendation}
+{conversation_history}
 
-Now the user wants to modify this outfit with the following request:
+Now the user says:
 "{user_request}"
 
 IMPORTANT INSTRUCTIONS:
-1. Identify which specific item(s) the user wants to change
-2. KEEP ALL OTHER ITEMS FROM THE PREVIOUS RECOMMENDATION EXACTLY THE SAME (same SKU, color, link, image)
-3. ONLY replace the item(s) the user specifically mentioned
-4. Return the complete updated outfit in the same JSON format
-5. Make sure all items exist in the database - DO NOT make up items
+1. Consider the FULL conversation history above when responding
+2. If the user references a previous outfit (e.g., "the first jacket", "go back to"), find it in the history
+3. If the user wants to modify the most recent outfit, keep unchanged items exactly the same (same SKU, color, link, image)
+4. ONLY replace the item(s) the user specifically mentioned
+5. Return the complete updated outfit in the same JSON format
+6. Make sure all items exist in the database - DO NOT make up items
 
-Return the full updated outfit JSON with the modification applied.
+Return the full updated outfit JSON.
 """

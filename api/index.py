@@ -57,21 +57,28 @@ def get_recommendation():
     try:
         data = request.json
         user_input = data.get('userInput', '').strip()
-        last_recommendation = data.get('lastRecommendation', None)
+        conversation_history = data.get('conversationHistory', [])
         
         if not user_input:
             return jsonify({'error': 'User input is required'}), 400
         
-        # Determine if this is a follow-up request
-        has_previous = last_recommendation is not None
+        # Determine if this is a follow-up request (has previous conversation)
+        has_previous = len(conversation_history) > 0
         is_follow_up = has_previous and is_follow_up_request(user_input)
         
         # Build the prompt based on context
         if is_follow_up:
-            # Multi-stage: Include previous recommendation in context
-            previous_json = json.dumps(last_recommendation, indent=2)
+            # Format conversation history for context
+            history_text = ""
+            for i, exchange in enumerate(conversation_history, 1):
+                user_msg = exchange.get('user', '')
+                assistant_response = exchange.get('assistant', {})
+                history_text += f"--- Exchange {i} ---\n"
+                history_text += f"User: {user_msg}\n"
+                history_text += f"Recommendation: {json.dumps(assistant_response, indent=2)}\n\n"
+            
             context_prompt = FOLLOW_UP_PROMPT.format(
-                previous_recommendation=previous_json,
+                conversation_history=history_text,
                 user_request=user_input
             )
             system_prompt = RECOMMENDATION_PROMPT

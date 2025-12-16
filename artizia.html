@@ -120,8 +120,10 @@
         const typingIndicator = document.getElementById('typingIndicator');
         const errorContainer = document.getElementById('errorContainer');
         
-        // Last recommendation for multi-stage conversation context (stateless for Vercel)
-        let lastRecommendation = null;
+        // Full conversation history for multi-turn context
+        let conversationHistory = [];
+        // Track current user message for pairing with response
+        let currentUserMessage = null;
         
         let FLASK_API_URL = '/api/recommend';
         let GENERATE_IMAGE_API_URL = '/api/generate-image';
@@ -495,10 +497,13 @@
             sendBtn.disabled = true;
             typingIndicator.classList.remove('hidden');
             
-            // Build payload with last recommendation for multi-stage context (stateless)
+            // Store current user message for pairing with response
+            currentUserMessage = userQuery;
+            
+            // Build payload with full conversation history for multi-turn context
             const payload = { 
                 userInput: userQuery,
-                lastRecommendation: lastRecommendation
+                conversationHistory: conversationHistory
             };
 
             try {
@@ -524,9 +529,12 @@
                 const responseData = result.data;
                 renderResponse(responseData);
                 
-                // Store last recommendation for follow-up requests
+                // Add this exchange to conversation history
                 if (responseData.outfit) {
-                    lastRecommendation = responseData;
+                    conversationHistory.push({
+                        user: currentUserMessage,
+                        assistant: responseData
+                    });
                 }
 
                 if (responseData.outfit && responseData.outfit.length > 0) {
@@ -583,8 +591,9 @@
         window.sendMessage = sendMessage;
         
         function clearConversation() {
-            // Clear last recommendation to start a new conversation
-            lastRecommendation = null;
+            // Clear full conversation history to start fresh
+            conversationHistory = [];
+            currentUserMessage = null;
             
             // Clear chat UI except for the welcome message
             chatHistory.innerHTML = `
