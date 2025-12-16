@@ -120,8 +120,8 @@
         const typingIndicator = document.getElementById('typingIndicator');
         const errorContainer = document.getElementById('errorContainer');
         
-        // Session ID for multi-stage conversation context
-        let currentSessionId = null;
+        // Last recommendation for multi-stage conversation context (stateless for Vercel)
+        let lastRecommendation = null;
         
         let FLASK_API_URL = '/api/recommend';
         let GENERATE_IMAGE_API_URL = '/api/generate-image';
@@ -495,10 +495,10 @@
             sendBtn.disabled = true;
             typingIndicator.classList.remove('hidden');
             
-            // Build payload with session ID for multi-stage context
+            // Build payload with last recommendation for multi-stage context (stateless)
             const payload = { 
                 userInput: userQuery,
-                sessionId: currentSessionId
+                lastRecommendation: lastRecommendation
             };
 
             try {
@@ -521,13 +521,13 @@
                     throw new Error(errorMessage);
                 }
 
-                // Store session ID returned from backend
-                if (result.sessionId) {
-                    currentSessionId = result.sessionId;
-                }
-
                 const responseData = result.data;
                 renderResponse(responseData);
+                
+                // Store last recommendation for follow-up requests
+                if (responseData.outfit) {
+                    lastRecommendation = responseData;
+                }
 
                 if (responseData.outfit && responseData.outfit.length > 0) {
                     const imageLoaderId = 'img-loader-' + Date.now();
@@ -583,8 +583,8 @@
         window.sendMessage = sendMessage;
         
         function clearConversation() {
-            // Clear session ID to start a new conversation
-            currentSessionId = null;
+            // Clear last recommendation to start a new conversation
+            lastRecommendation = null;
             
             // Clear chat UI except for the welcome message
             chatHistory.innerHTML = `

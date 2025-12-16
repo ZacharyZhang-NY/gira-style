@@ -5,7 +5,6 @@ from google.genai import types
 import json
 import os
 import base64
-import uuid
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -32,31 +31,9 @@ else:
 
 # In-memory session storage for conversation context
 # Key: session_id, Value: { 'last_recommendation': {...}, 'history': [...] }
-sessions = {}
-
-
 @app.route('/')
 def serve_frontend():
     return send_from_directory(os.getcwd(), 'artizia.html')
-
-
-@app.route('/api/session', methods=['POST'])
-def create_session():
-    """Create a new conversation session."""
-    session_id = str(uuid.uuid4())
-    sessions[session_id] = {
-        'last_recommendation': None,
-        'history': []
-    }
-    return jsonify({'success': True, 'sessionId': session_id})
-
-
-@app.route('/api/session/<session_id>', methods=['DELETE'])
-def clear_session(session_id):
-    """Clear a conversation session."""
-    if session_id in sessions:
-        del sessions[session_id]
-    return jsonify({'success': True})
 
 
 def is_follow_up_request(user_input):
@@ -80,27 +57,19 @@ def get_recommendation():
     try:
         data = request.json
         user_input = data.get('userInput', '').strip()
-        session_id = data.get('sessionId', '')
+        last_recommendation = data.get('lastRecommendation', None)
         
         if not user_input:
             return jsonify({'error': 'User input is required'}), 400
         
-        # Get or create session
-        if session_id and session_id in sessions:
-            session = sessions[session_id]
-        else:
-            session_id = str(uuid.uuid4())
-            session = {'last_recommendation': None, 'history': []}
-            sessions[session_id] = session
-        
         # Determine if this is a follow-up request
-        has_previous = session['last_recommendation'] is not None
+        has_previous = last_recommendation is not None
         is_follow_up = has_previous and is_follow_up_request(user_input)
         
         # Build the prompt based on context
         if is_follow_up:
             # Multi-stage: Include previous recommendation in context
-            previous_json = json.dumps(session['last_recommendation'], indent=2)
+            previous_json = json.dumps(last_recommendation, indent=2)
             context_prompt = FOLLOW_UP_PROMPT.format(
                 previous_recommendation=previous_json,
                 user_request=user_input
@@ -142,14 +111,10 @@ def get_recommendation():
         
         try:
             outfit_data = json.loads(cleaned_text)
-            # Store recommendation in session for follow-ups
-            session['last_recommendation'] = outfit_data
-            session['history'].append({'role': 'user', 'content': user_input})
-            session['history'].append({'role': 'assistant', 'content': outfit_data})
-            return jsonify({'success': True, 'data': outfit_data, 'sessionId': session_id})
+            return jsonify({'success': True, 'data': outfit_data})
         except json.JSONDecodeError:
             print(f"JSONDecodeError: Raw response was {response_text}")
-            return jsonify({'success': True, 'data': {'formatted_response': response_text}, 'sessionId': session_id})
+            return jsonify({'success': True, 'data': {'formatted_response': response_text}})
         
     except Exception as e:
         print(f"Error: {str(e)}")
