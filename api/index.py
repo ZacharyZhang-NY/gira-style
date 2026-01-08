@@ -111,7 +111,11 @@ def get_recommendation():
             config=types.GenerateContentConfig(
                 system_instruction=RECOMMENDATION_PROMPT,
                 tools=[file_search_tool],
-                temperature=0.7,
+                temperature=1.0,  # Gemini 3 is optimized for 1.0
+                thinking_config=types.ThinkingConfig(
+                    include_thoughts=False, 
+                    thinking_level="MINIMAL" # Use "MINIMAL" or "LOW" for speed
+                ),
             )
         )
 
