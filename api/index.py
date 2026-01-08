@@ -117,9 +117,17 @@ def get_recommendation():
 
         response_text = response.text
 
-        # Clean up response
+        # Clean up response - remove tool_code markers and markdown formatting
         cleaned_text = response_text.strip()
-        if cleaned_text.startswith('```'):
+
+        # Remove any "tool_code" prefixes (from File Search tool execution)
+        while 'tool_code' in cleaned_text:
+            cleaned_text = cleaned_text.replace('tool_code', '').strip()
+
+        # Remove markdown code blocks
+        if cleaned_text.startswith('```json'):
+            cleaned_text = cleaned_text[7:]
+        elif cleaned_text.startswith('```'):
             first_newline = cleaned_text.find('\n')
             if first_newline != -1:
                 cleaned_text = cleaned_text[first_newline + 1:]
@@ -129,13 +137,22 @@ def get_recommendation():
             cleaned_text = cleaned_text[:-3]
         cleaned_text = cleaned_text.strip()
 
+        # Find the JSON object in the response (in case there's extra text)
+        json_start = cleaned_text.find('{')
+        json_end = cleaned_text.rfind('}')
+        if json_start != -1 and json_end != -1:
+            cleaned_text = cleaned_text[json_start:json_end + 1]
+
         try:
             outfit_data = json.loads(cleaned_text)
             outfit_count = len(outfit_data.get('outfit', []))
             logger.info(f"[File Search] Complete. Selected {outfit_count} items for outfit.")
+            logger.debug(f"[File Search] Outfit data: {json.dumps(outfit_data, indent=2)}")
             return jsonify({'success': True, 'data': outfit_data})
-        except json.JSONDecodeError:
-            logger.warning(f"[File Search] JSONDecodeError: Raw response was {response_text}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"[File Search] JSONDecodeError: {e}")
+            logger.warning(f"[File Search] Raw response: {response_text}")
+            logger.warning(f"[File Search] Cleaned text: {cleaned_text}")
             return jsonify({'success': True, 'data': {'formatted_response': response_text}})
 
     except Exception as e:
@@ -152,6 +169,7 @@ def generate_image():
     try:
         data = request.json
         outfit_items = data.get('outfit_items', [])
+        logger.info(f"[Image Gen] Received {len(outfit_items)} items for image generation")
         
         if not outfit_items:
             return jsonify({'error': 'Outfit items unavailable.'}), 400
