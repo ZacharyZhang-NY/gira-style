@@ -526,9 +526,37 @@
                     throw new Error(errorMessage);
                 }
 
-                const responseData = result.data;
+                let responseData = result.data;
+
+                // If response is formatted_response, try to extract outfit data
+                if (responseData.formatted_response && !responseData.outfit) {
+                    try {
+                        let raw = responseData.formatted_response;
+                        // Clean up tool_code prefixes if present
+                        while (raw.includes('tool_code')) {
+                            raw = raw.replace('tool_code', '').trim();
+                        }
+                        // Remove markdown code blocks
+                        if (raw.startsWith('```json')) raw = raw.slice(7);
+                        else if (raw.startsWith('```')) raw = raw.slice(3);
+                        if (raw.endsWith('```')) raw = raw.slice(0, -3);
+                        raw = raw.trim();
+                        // Extract JSON object
+                        const jsonStart = raw.indexOf('{');
+                        const jsonEnd = raw.lastIndexOf('}');
+                        if (jsonStart !== -1 && jsonEnd !== -1) {
+                            const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+                            if (parsed.outfit) {
+                                responseData = parsed;
+                            }
+                        }
+                    } catch (e) {
+                        console.log('Could not extract outfit from formatted_response:', e);
+                    }
+                }
+
                 renderResponse(responseData);
-                
+
                 // Add this exchange to conversation history
                 if (responseData.outfit) {
                     conversationHistory.push({
