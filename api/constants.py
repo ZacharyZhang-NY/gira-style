@@ -5,6 +5,7 @@ MY_LIST = '128522, 129668'
 # Gemini Model Configuration
 IMG_GEN_MODEL = "gemini-3-pro-image-preview"
 RECOMMENDATION_MODEL = "gemini-3-flash-preview"
+VIDEO_GEN_MODEL = "veo-3.1-fast-generate-preview"
 
 # Google File Search Store Configuration
 FILE_SEARCH_STORE = "fileSearchStores/gira-style-hackathonaritzia-qegz3krvdqkv"
@@ -52,4 +53,16 @@ IMPORTANT INSTRUCTIONS:
 6. Make sure all items exist in the database - DO NOT make up items
 
 Return the full updated outfit JSON.
+"""
+
+VIDOE_GENERATION_PROMPT = """
+Camera: Medium-full shot, 9:16 vertical aspect ratio. Execute a very slow, subtle zoom-in to add cinematic depth without pixel distortion.
+
+Subject: The model from the reference image, wearing {clothing_description}.
+
+Action: The model performs a gentle weight shift and a graceful 15-degree turn to the side. This slight rotation showcases the garment's profile while maintaining front-side detail integrity.
+
+Physics: High-fidelity cloth simulation. The fabric must react naturally to the slight body rotation with realistic swaying, subtle folds, and light-catching textures.
+
+Environment: Clean, minimalist studio setting with a neutral background. Use soft, even three-point lighting to emphasize fabric texture and eliminate harsh shadows. No text, subtitles, or watermarks.
 """

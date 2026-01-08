@@ -98,6 +98,15 @@
                 >
                     <span>Send Message</span>
                 </button>
+                <button
+                    id="videoToggleBtn"
+                    onclick="toggleVideoPreview()"
+                    class="px-3 py-2 text-xs font-semibold rounded-lg transition duration-200"
+                    title="Toggle video generation"
+                    type="button"
+                >
+                    Video: On
+                </button>
                 <button 
                     id="clearBtn" 
                     onclick="clearConversation()" 
@@ -128,6 +137,9 @@
         
         let FLASK_API_URL = '/api/recommend';
         let GENERATE_IMAGE_API_URL = '/api/generate-image';
+        let GENERATE_VIDEO_API_URL = '/api/generate-video';
+        let ENABLE_VIDEO_PREVIEW = true;
+        const VIDEO_TOGGLE_STORAGE_KEY = 'aritziaVideoPreviewEnabled';
 
         function determineBackendUrl(endpoint) {
             const loc = window.location;
@@ -160,6 +172,7 @@
 
         FLASK_API_URL = determineBackendUrl('/api/recommend');
         GENERATE_IMAGE_API_URL = determineBackendUrl('/api/generate-image');
+        GENERATE_VIDEO_API_URL = determineBackendUrl('/api/generate-video');
 
         function renderUserMessage(message) {
             const messageEl = document.createElement('div');
@@ -474,21 +487,98 @@
             chatHistory.scrollTop = chatHistory.scrollHeight;
         }
 
+        function renderGeneratedVideo(videoSrc, posterSrc) {
+            const videoId = `generated-video-${Date.now()}`;
+            const buttonId = `generated-video-btn-${Date.now()}`;
+            const messageEl = document.createElement('div');
+            messageEl.className = 'flex justify-start';
+            messageEl.innerHTML = `
+                <div class="bg-amber-50 text-gray-700 p-4 rounded-lg max-w-[95%] shadow-md text-sm mt-2 border border-amber-100">
+                    <p class="font-semibold text-amber-800 mb-3 flex items-center">
+                        <span>🎥 Outfit motion preview</span>
+                    </p>
+                    <div class="rounded-lg overflow-hidden shadow-lg">
+                        <video id="${videoId}" src="${videoSrc}" class="w-full h-auto" poster="${posterSrc || ''}" controls autoplay loop muted playsinline></video>
+                    </div>
+                    <div class="mt-3 flex justify-end">
+                        <button id="${buttonId}" class="bg-amber-100 hover:bg-amber-200 text-amber-900 px-3 py-1.5 rounded-md text-xs font-semibold">
+                            Pause
+                        </button>
+                    </div>
+                </div>
+            `;
+            chatHistory.appendChild(messageEl);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            const videoEl = messageEl.querySelector(`#${videoId}`);
+            const buttonEl = messageEl.querySelector(`#${buttonId}`);
+            if (videoEl && buttonEl) {
+                buttonEl.addEventListener('click', () => {
+                    if (videoEl.paused) {
+                        videoEl.play();
+                        buttonEl.textContent = 'Pause';
+                    } else {
+                        videoEl.pause();
+                        buttonEl.textContent = 'Play';
+                    }
+                });
+            }
+        }
+
         async function fetchImageAsBase64(url) {
             try {
                 const response = await fetch(url);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const blob = await response.blob();
-                return new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result);
-                    reader.onerror = reject;
-                    reader.readAsDataURL(blob);
-                });
+                const supportedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+                if (!supportedTypes.includes(blob.type)) {
+                    return await convertImageBlobToPngDataUrl(blob);
+                }
+                return await blobToDataUrl(blob);
             } catch (error) {
                 console.error(`Failed to fetch image: ${url}`, error);
                 return null;
             }
+        }
+
+        function blobToDataUrl(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        async function convertImageBlobToPngDataUrl(blob) {
+            if (typeof createImageBitmap === 'function') {
+                const bitmap = await createImageBitmap(blob);
+                const canvas = document.createElement('canvas');
+                canvas.width = bitmap.width;
+                canvas.height = bitmap.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(bitmap, 0, 0);
+                return canvas.toDataURL('image/png');
+            }
+
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                const objectUrl = URL.createObjectURL(blob);
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth || img.width;
+                    canvas.height = img.naturalHeight || img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    URL.revokeObjectURL(objectUrl);
+                    resolve(canvas.toDataURL('image/png'));
+                };
+                img.onerror = (err) => {
+                    URL.revokeObjectURL(objectUrl);
+                    reject(err);
+                };
+                img.src = objectUrl;
+            });
         }
 
         async function generateOutfitImage(outfitData) {
@@ -548,6 +638,46 @@
             }
         }
 
+        async function generateOutfitVideo(imageData, outfitData) {
+            const items = [
+                ...(outfitData.outfit || []),
+                ...(outfitData.accessories || [])
+            ];
+
+            const outfitItems = items
+                .filter(item => item.item_name)
+                .map(item => ({ item_name: item.item_name }));
+
+            const payload = {
+                image_data: imageData,
+                outfit_items: outfitItems
+            };
+
+            try {
+                const response = await fetch(GENERATE_VIDEO_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    return { error: result.error || `HTTP error ${response.status}` };
+                }
+
+                if (result.success && (result.video_data || result.video_uri)) {
+                    return result;
+                } else if (result.error) {
+                    return { error: result.error };
+                } else {
+                    return { error: "Unexpected response format from video generation API." };
+                }
+            } catch (error) {
+                return { error: `Network error: ${error.message}` };
+            }
+        }
+
         function renderImageGenerationError(errorMessage) {
             const messageEl = document.createElement('div');
             messageEl.className = 'flex justify-start';
@@ -555,6 +685,21 @@
                 <div class="bg-red-50 text-gray-700 p-3 rounded-lg max-w-[95%] shadow-sm text-sm mt-2 border border-red-200">
                     <p class="font-semibold text-red-700 mb-1 flex items-center">
                         <span>⚠️ Image Generation Failed</span>
+                    </p>
+                    <p class="text-xs text-red-600">${errorMessage}</p>
+                </div>
+            `;
+            chatHistory.appendChild(messageEl);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        function renderVideoGenerationError(errorMessage) {
+            const messageEl = document.createElement('div');
+            messageEl.className = 'flex justify-start';
+            messageEl.innerHTML = `
+                <div class="bg-red-50 text-gray-700 p-3 rounded-lg max-w-[95%] shadow-sm text-sm mt-2 border border-red-200">
+                    <p class="font-semibold text-red-700 mb-1 flex items-center">
+                        <span>⚠️ Video Generation Failed</span>
                     </p>
                     <p class="text-xs text-red-600">${errorMessage}</p>
                 </div>
@@ -677,6 +822,39 @@
 
                         if (result && result.image_data) {
                             renderGeneratedImage(result.image_data);
+                            if (!ENABLE_VIDEO_PREVIEW) {
+                                return;
+                            }
+                            const videoLoaderId = 'video-loader-' + Date.now();
+                            const videoLoaderEl = document.createElement('div');
+                            videoLoaderEl.id = videoLoaderId;
+                            videoLoaderEl.className = 'flex justify-start mt-2 pl-2';
+                            videoLoaderEl.innerHTML = `
+                                <div class="bg-amber-50 p-3 rounded-lg shadow-sm flex items-center space-x-3 border border-amber-100">
+                                    <div class="spinner-dots text-amber-500 !w-6 !h-3">
+                                        <div class="!bg-amber-500"></div><div class="!bg-amber-500"></div><div class="!bg-amber-500"></div><div class="!bg-amber-500"></div>
+                                    </div>
+                                    <span class="text-xs text-amber-700 font-medium">Generating video preview...</span>
+                                </div>
+                            `;
+                            chatHistory.appendChild(videoLoaderEl);
+                            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+                            generateOutfitVideo(result.image_data, responseData).then(videoResult => {
+                                const videoLoader = document.getElementById(videoLoaderId);
+                                if (videoLoader) videoLoader.remove();
+
+                                if (videoResult && (videoResult.video_data || videoResult.video_uri)) {
+                                    renderGeneratedVideo(
+                                        videoResult.video_data || videoResult.video_uri,
+                                        result.image_data
+                                    );
+                                } else if (videoResult && videoResult.error) {
+                                    renderVideoGenerationError(videoResult.error);
+                                } else {
+                                    renderVideoGenerationError("Unknown error occurred during video generation.");
+                                }
+                            });
                         } else if (result && result.error) {
                             renderImageGenerationError(result.error);
                         } else {
@@ -707,7 +885,41 @@
             }
         }
 
+        function updateVideoToggleLabel() {
+            const toggleBtn = document.getElementById('videoToggleBtn');
+            if (!toggleBtn) return;
+            toggleBtn.textContent = ENABLE_VIDEO_PREVIEW ? 'Video: On' : 'Video: Off';
+            if (ENABLE_VIDEO_PREVIEW) {
+                toggleBtn.classList.remove('text-gray-600', 'hover:text-gray-900', 'hover:bg-gray-200');
+                toggleBtn.classList.add('bg-emerald-100', 'text-emerald-900', 'hover:bg-emerald-200');
+            } else {
+                toggleBtn.classList.remove('bg-emerald-100', 'text-emerald-900', 'hover:bg-emerald-200');
+                toggleBtn.classList.add('text-gray-600', 'hover:text-gray-900', 'hover:bg-gray-200');
+            }
+        }
+
+        function loadVideoTogglePreference() {
+            try {
+                const stored = localStorage.getItem(VIDEO_TOGGLE_STORAGE_KEY);
+                if (stored === null) return;
+                ENABLE_VIDEO_PREVIEW = stored === 'true';
+            } catch (error) {
+                console.warn('Failed to load video toggle preference', error);
+            }
+        }
+
+        function toggleVideoPreview() {
+            ENABLE_VIDEO_PREVIEW = !ENABLE_VIDEO_PREVIEW;
+            try {
+                localStorage.setItem(VIDEO_TOGGLE_STORAGE_KEY, String(ENABLE_VIDEO_PREVIEW));
+            } catch (error) {
+                console.warn('Failed to save video toggle preference', error);
+            }
+            updateVideoToggleLabel();
+        }
+
         window.sendMessage = sendMessage;
+        window.toggleVideoPreview = toggleVideoPreview;
         
         function clearConversation() {
             // Clear full conversation history to start fresh
@@ -728,6 +940,8 @@
         }
         
         window.clearConversation = clearConversation;
+        loadVideoTogglePreference();
+        updateVideoToggleLabel();
     </script>
 </body>
 </html>
