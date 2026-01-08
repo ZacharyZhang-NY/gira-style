@@ -1,10 +1,12 @@
+import logging
+import json
+import os
+import base64
+
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from google import genai
 from google.genai import types
-import json
-import os
-import base64
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -15,22 +17,29 @@ from api.constants import (
     RECOMMENDATION_MODEL,
     RECOMMENDATION_PROMPT,
     FOLLOW_UP_PROMPT,
-    FILE_SEARCH_STORE_NAME,
-    IMAGE_GEN_PROMPT
+    IMAGE_GEN_PROMPT,
+    FILE_SEARCH_STORE,
 )
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
+# Initialize Gemini client
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
-    print("WARNING: GEMINI_API_KEY environment variable not set.")
-    client = None
+    logger.warning("GEMINI_API_KEY environment variable not set.")
+    gemini_client = None
 else:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    logger.info(f"Gemini client initialized. File Search Store: {FILE_SEARCH_STORE}")
 
-# In-memory session storage for conversation context
-# Key: session_id, Value: { 'last_recommendation': {...}, 'history': [...] }
 @app.route('/')
 def serve_frontend():
     return send_from_directory(os.getcwd(), 'artizia.html')
@@ -42,7 +51,9 @@ def is_follow_up_request(user_input):
         'change', 'swap', 'replace', 'different', 'another', 'instead',
         'modify', 'update', 'switch', 'prefer', 'don\'t like', 'not like',
         'something else', 'other option', 'alternative', 'warmer', 'cooler',
-        'more casual', 'more formal', 'less', 'more', 'keep the', 'but'
+        'more casual', 'more formal', 'less', 'more', 'keep the', 'but',
+        'whole outfit', 'full outfit', 'complete outfit', 'not just', 'not only',
+        'add more', 'need more', 'want more', 'standalone', 'single item'
     ]
     user_lower = user_input.lower()
     return any(keyword in user_lower for keyword in follow_up_keywords)
@@ -50,23 +61,25 @@ def is_follow_up_request(user_input):
 
 @app.route('/api/recommend', methods=['POST'])
 def get_recommendation():
-    """Get outfit recommendation from the Aritzia agent - Multi-stage approach."""
-    if not client:
+    """Get outfit recommendation using Gemini with File Search."""
+    if not gemini_client:
         return jsonify({'error': 'Gemini client not initialized (API key missing)'}), 500
 
     try:
         data = request.json
         user_input = data.get('userInput', '').strip()
         conversation_history = data.get('conversationHistory', [])
-        
+
         if not user_input:
             return jsonify({'error': 'User input is required'}), 400
-        
+
         # Determine if this is a follow-up request (has previous conversation)
         has_previous = len(conversation_history) > 0
         is_follow_up = has_previous and is_follow_up_request(user_input)
-        
-        # Build the prompt based on context
+
+        logger.info(f"[File Search] Starting recommendation for: {user_input}")
+
+        # Build the prompt with context
         if is_follow_up:
             # Format conversation history for context
             history_text = ""
@@ -76,35 +89,35 @@ def get_recommendation():
                 history_text += f"--- Exchange {i} ---\n"
                 history_text += f"User: {user_msg}\n"
                 history_text += f"Recommendation: {json.dumps(assistant_response, indent=2)}\n\n"
-            
+
             context_prompt = FOLLOW_UP_PROMPT.format(
                 conversation_history=history_text,
                 user_request=user_input
             )
-            system_prompt = RECOMMENDATION_PROMPT
         else:
-            # Fresh request
             context_prompt = user_input
-            system_prompt = RECOMMENDATION_PROMPT
-        
-        # Create chat and send message
-        chat = client.chats.create(
-            model=RECOMMENDATION_MODEL,
-            config={
-                "system_instruction": system_prompt,
-                "tools": [
-                    types.Tool(
-                        file_search=types.FileSearch(
-                            file_search_store_names=[FILE_SEARCH_STORE_NAME]
-                        )
-                    )
-                ]
-            }
+
+        # Configure File Search tool
+        file_search_tool = types.Tool(
+            file_search=types.FileSearch(
+                file_search_store_names=[FILE_SEARCH_STORE]
+            )
         )
-        
-        response = chat.send_message(context_prompt)
+
+        # Generate recommendation with Gemini using File Search
+        response = gemini_client.models.generate_content(
+            model=RECOMMENDATION_MODEL,
+            contents=context_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=RECOMMENDATION_PROMPT,
+                tools=[file_search_tool],
+                temperature=0.7,
+            )
+        )
+
         response_text = response.text
-        
+
+        # Clean up response
         cleaned_text = response_text.strip()
         if cleaned_text.startswith('```'):
             first_newline = cleaned_text.find('\n')
@@ -115,23 +128,25 @@ def get_recommendation():
         if cleaned_text.endswith('```'):
             cleaned_text = cleaned_text[:-3]
         cleaned_text = cleaned_text.strip()
-        
+
         try:
             outfit_data = json.loads(cleaned_text)
+            outfit_count = len(outfit_data.get('outfit', []))
+            logger.info(f"[File Search] Complete. Selected {outfit_count} items for outfit.")
             return jsonify({'success': True, 'data': outfit_data})
         except json.JSONDecodeError:
-            print(f"JSONDecodeError: Raw response was {response_text}")
+            logger.warning(f"[File Search] JSONDecodeError: Raw response was {response_text}")
             return jsonify({'success': True, 'data': {'formatted_response': response_text}})
-        
+
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"Recommendation error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/generate-image', methods=['POST'])
 def generate_image():
     """Generate an outfit visualization using Gemini image generation."""
-    if not client:
+    if not gemini_client:
         return jsonify({'error': 'Gemini client not initialized (API key missing)'}), 500
 
     try:
@@ -157,9 +172,9 @@ def generate_image():
                     contents.append(types.Part.from_text(text=f"This image shows the {item_name}."))
                     contents.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
                     successful_items.append(item_name)
-                    print(f"Added image for {item_name}, size: {len(image_bytes)} bytes")
+                    logger.debug(f"Added image for {item_name}, size: {len(image_bytes)} bytes")
                 except Exception as e:
-                    print(f"Failed to decode base64 for {item_name}: {e}")
+                    logger.warning(f"Failed to decode base64 for {item_name}: {e}")
         
         if len(successful_items) == 0:
             return jsonify({'error': 'No valid images received. Unable to generate outfit visualization.'}), 500
@@ -176,9 +191,9 @@ def generate_image():
             )
         )
 
-        print(f"Sending image and prompt to {IMG_GEN_MODEL}...")
-        
-        response = client.models.generate_content(
+        logger.info(f"Sending image and prompt to {IMG_GEN_MODEL}...")
+
+        response = gemini_client.models.generate_content(
             model=IMG_GEN_MODEL,
             contents=contents,
             config=config,
@@ -196,7 +211,7 @@ def generate_image():
         return jsonify({'error': 'Model executed, but no image data was found in the response.'}), 500
 
     except Exception as e:
-        print(f"Error generating image: {str(e)}")
+        logger.error(f"Error generating image: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -207,4 +222,5 @@ def health():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(debug=debug_mode, host='0.0.0.0', port=5001)

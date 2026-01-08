@@ -4,6 +4,17 @@
 .venv/
 venv/
 
+# Secrets and Credentials
+*.json
+!package.json
+!package-lock.json
+api/sa.json
+**/sa.json
+*-credentials.json
+*-key.json
+*.pem
+*.key
+
 # Python
 __pycache__/
 *.py[cod]
@@ -11,6 +22,9 @@ __pycache__/
 *.pyd
 .Python
 *.so
+*.egg-info/
+dist/
+build/
 
 # Vercel
 .vercel
@@ -24,6 +38,14 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temp files
+/tmp/
+*.tmp
 
 # Old/Unused
 legacy/
