@@ -124,6 +124,7 @@
         let conversationHistory = [];
         // Track current user message for pairing with response
         let currentUserMessage = null;
+        let isSending = false;
         
         let FLASK_API_URL = '/api/recommend';
         let GENERATE_IMAGE_API_URL = '/api/generate-image';
@@ -374,6 +375,88 @@
             chatHistory.scrollTop = chatHistory.scrollHeight;
         }
 
+        function createStreamingMessage() {
+            const messageEl = document.createElement('div');
+            messageEl.className = 'flex justify-start';
+            messageEl.innerHTML = `
+                <div class="bg-blue-50 text-gray-700 p-4 rounded-lg max-w-[95%] shadow-md text-sm">
+                    <div class="streaming-placeholder flex items-center space-x-2 text-xs text-gray-500">
+                        <div class="spinner-dots text-indigo-500 !w-6 !h-3">
+                            <div class="!bg-indigo-500"></div><div class="!bg-indigo-500"></div><div class="!bg-indigo-500"></div><div class="!bg-indigo-500"></div>
+                        </div>
+                        <span>Building your outfit recommendation...</span>
+                    </div>
+                    <p class="streaming-description hidden text-sm text-gray-700 italic mt-2"></p>
+                </div>
+            `;
+            chatHistory.appendChild(messageEl);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+            return messageEl;
+        }
+
+        function extractDescriptionFromPartial(rawText) {
+            const match = rawText.match(/"description"\s*:\s*"/);
+            if (!match) return null;
+            let idx = match.index + match[0].length;
+            let out = '';
+            let escaped = false;
+            for (let i = idx; i < rawText.length; i++) {
+                const ch = rawText[i];
+                if (escaped) {
+                    out += ch;
+                    escaped = false;
+                    continue;
+                }
+                if (ch === '\\') {
+                    escaped = true;
+                    continue;
+                }
+                if (ch === '"') {
+                    return out;
+                }
+                out += ch;
+            }
+            return out || null;
+        }
+
+        function extractResponseData(rawText) {
+            let cleaned = String(rawText || '').trim();
+
+            while (cleaned.includes('tool_code')) {
+                cleaned = cleaned.replace('tool_code', '').trim();
+            }
+
+            if (cleaned.startsWith('```json')) {
+                cleaned = cleaned.slice(7);
+            } else if (cleaned.startsWith('```')) {
+                const fenceEnd = cleaned.indexOf('\n');
+                if (fenceEnd !== -1) {
+                    cleaned = cleaned.slice(fenceEnd).trim();
+                } else {
+                    cleaned = cleaned.slice(3);
+                }
+            }
+
+            if (cleaned.endsWith('```')) {
+                cleaned = cleaned.slice(0, -3);
+            }
+
+            cleaned = cleaned.trim();
+
+            const jsonStart = cleaned.indexOf('{');
+            const jsonEnd = cleaned.lastIndexOf('}');
+            if (jsonStart !== -1 && jsonEnd !== -1) {
+                const possibleJson = cleaned.slice(jsonStart, jsonEnd + 1);
+                try {
+                    return JSON.parse(possibleJson);
+                } catch (err) {
+                    return { formatted_response: cleaned };
+                }
+            }
+
+            return { formatted_response: cleaned };
+        }
+
         function renderGeneratedImage(imageData) {
             const messageEl = document.createElement('div');
             messageEl.className = 'flex justify-start';
@@ -481,6 +564,9 @@
         }
 
         async function sendMessage() {
+            if (isSending) {
+                return;
+            }
             const userQuery = userChatInput.value.trim();
 
             if (!userQuery) {
@@ -494,6 +580,7 @@
             userChatInput.value = '';
             errorContainer.classList.add('hidden');
 
+            isSending = true;
             sendBtn.disabled = true;
             typingIndicator.classList.remove('hidden');
             
@@ -512,52 +599,55 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                
-                const contentType = response.headers.get("content-type");
-                if (contentType && contentType.indexOf("application/json") === -1) {
-                     const text = await response.text();
-                     throw new Error(`API returned ${contentType} instead of JSON. Response: ${text.substring(0, 50)}...`);
-                }
 
-                const result = await response.json();
-
-                if (!response.ok || result.error) {
-                    const errorMessage = result.error || `HTTP error! Status: ${response.status}`;
+                if (!response.ok) {
+                    let errorMessage = `HTTP error! Status: ${response.status}`;
+                    try {
+                        const errorResult = await response.json();
+                        if (errorResult.error) errorMessage = errorResult.error;
+                    } catch (err) {
+                        // Ignore JSON parse errors for streaming responses.
+                    }
                     throw new Error(errorMessage);
                 }
 
-                let responseData = result.data;
+                const streamMessageEl = createStreamingMessage();
+                const streamPlaceholder = streamMessageEl.querySelector('.streaming-placeholder');
+                const streamDescription = streamMessageEl.querySelector('.streaming-description');
+                const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+                const decoder = new TextDecoder();
+                let fullText = '';
 
-                // If response is formatted_response, try to extract outfit data
-                if (responseData.formatted_response && !responseData.outfit) {
-                    try {
-                        let raw = responseData.formatted_response;
-                        // Clean up tool_code prefixes if present
-                        while (raw.includes('tool_code')) {
-                            raw = raw.replace('tool_code', '').trim();
+                if (reader) {
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        const chunk = decoder.decode(value, { stream: true });
+                        fullText += chunk;
+                        const partialDescription = extractDescriptionFromPartial(fullText);
+                        if (partialDescription && streamDescription) {
+                            if (streamPlaceholder) streamPlaceholder.classList.add('hidden');
+                            streamDescription.classList.remove('hidden');
+                            streamDescription.textContent = partialDescription;
                         }
-                        // Remove markdown code blocks
-                        if (raw.startsWith('```json')) raw = raw.slice(7);
-                        else if (raw.startsWith('```')) raw = raw.slice(3);
-                        if (raw.endsWith('```')) raw = raw.slice(0, -3);
-                        raw = raw.trim();
-                        // Extract JSON object
-                        const jsonStart = raw.indexOf('{');
-                        const jsonEnd = raw.lastIndexOf('}');
-                        if (jsonStart !== -1 && jsonEnd !== -1) {
-                            const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
-                            if (parsed.outfit) {
-                                responseData = parsed;
-                            }
-                        }
-                    } catch (e) {
-                        console.log('Could not extract outfit from formatted_response:', e);
+                        chatHistory.scrollTop = chatHistory.scrollHeight;
                     }
+                } else {
+                    fullText = await response.text();
                 }
 
-                renderResponse(responseData);
+                const errorMarkerIndex = fullText.indexOf('[ERROR]');
+                if (errorMarkerIndex !== -1) {
+                    throw new Error(fullText.slice(errorMarkerIndex + 7).trim());
+                }
 
-                // Add this exchange to conversation history
+                const responseData = extractResponseData(fullText);
+                streamMessageEl.innerHTML = `
+                    <div class="bg-blue-50 text-gray-700 p-4 rounded-lg max-w-[95%] shadow-md text-sm">
+                        ${formatOutfitResponse(responseData)}
+                    </div>
+                `;
+
                 if (responseData.outfit) {
                     conversationHistory.push({
                         user: currentUserMessage,
@@ -613,6 +703,7 @@
                 sendBtn.disabled = false;
                 typingIndicator.classList.add('hidden');
                 userChatInput.focus();
+                isSending = false;
             }
         }
 

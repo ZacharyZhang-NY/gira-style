@@ -3,7 +3,7 @@ import json
 import os
 import base64
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 from google import genai
 from google.genai import types
@@ -61,7 +61,7 @@ def is_follow_up_request(user_input):
 
 @app.route('/api/recommend', methods=['POST'])
 def get_recommendation():
-    """Get outfit recommendation using Gemini with File Search."""
+    """Get outfit recommendation using Gemini with File Search (streaming)."""
     if not gemini_client:
         return jsonify({'error': 'Gemini client not initialized (API key missing)'}), 500
 
@@ -104,60 +104,70 @@ def get_recommendation():
             )
         )
 
-        # Generate recommendation with Gemini using File Search
-        response = gemini_client.models.generate_content(
-            model=RECOMMENDATION_MODEL,
-            contents=context_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=RECOMMENDATION_PROMPT,
-                tools=[file_search_tool],
-                temperature=1.0,  # Gemini 3 is optimized for 1.0
-                thinking_config=types.ThinkingConfig(
-                    include_thoughts=False, 
-                    thinking_level="MINIMAL" # Use "MINIMAL" or "LOW" for speed
-                ),
-            )
-        )
+        def clean_response_text(raw_text):
+            cleaned = raw_text.strip()
 
-        response_text = response.text
+            while 'tool_code' in cleaned:
+                cleaned = cleaned.replace('tool_code', '').strip()
 
-        # Clean up response - remove tool_code markers and markdown formatting
-        cleaned_text = response_text.strip()
+            if cleaned.startswith('```json'):
+                cleaned = cleaned[7:]
+            elif cleaned.startswith('```'):
+                first_newline = cleaned.find('\n')
+                if first_newline != -1:
+                    cleaned = cleaned[first_newline + 1:]
+                else:
+                    cleaned = cleaned[3:]
+            if cleaned.endswith('```'):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
 
-        # Remove any "tool_code" prefixes (from File Search tool execution)
-        while 'tool_code' in cleaned_text:
-            cleaned_text = cleaned_text.replace('tool_code', '').strip()
+            json_start = cleaned.find('{')
+            json_end = cleaned.rfind('}')
+            if json_start != -1 and json_end != -1:
+                cleaned = cleaned[json_start:json_end + 1]
 
-        # Remove markdown code blocks
-        if cleaned_text.startswith('```json'):
-            cleaned_text = cleaned_text[7:]
-        elif cleaned_text.startswith('```'):
-            first_newline = cleaned_text.find('\n')
-            if first_newline != -1:
-                cleaned_text = cleaned_text[first_newline + 1:]
-            else:
-                cleaned_text = cleaned_text[3:]
-        if cleaned_text.endswith('```'):
-            cleaned_text = cleaned_text[:-3]
-        cleaned_text = cleaned_text.strip()
+            return cleaned
 
-        # Find the JSON object in the response (in case there's extra text)
-        json_start = cleaned_text.find('{')
-        json_end = cleaned_text.rfind('}')
-        if json_start != -1 and json_end != -1:
-            cleaned_text = cleaned_text[json_start:json_end + 1]
+        def stream_recommendation():
+            full_text = ""
+            try:
+                response_stream = gemini_client.models.generate_content_stream(
+                    model=RECOMMENDATION_MODEL,
+                    contents=context_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=RECOMMENDATION_PROMPT,
+                        tools=[file_search_tool],
+                        temperature=1.0,  # Gemini 3 is optimized for 1.0
+                        thinking_config=types.ThinkingConfig(
+                            include_thoughts=False,
+                            thinking_level="MINIMAL"  # Use "MINIMAL" or "LOW" for speed
+                        ),
+                    )
+                )
 
-        try:
-            outfit_data = json.loads(cleaned_text)
-            outfit_count = len(outfit_data.get('outfit', []))
-            logger.info(f"[File Search] Complete. Selected {outfit_count} items for outfit.")
-            logger.debug(f"[File Search] Outfit data: {json.dumps(outfit_data, indent=2)}")
-            return jsonify({'success': True, 'data': outfit_data})
-        except json.JSONDecodeError as e:
-            logger.warning(f"[File Search] JSONDecodeError: {e}")
-            logger.warning(f"[File Search] Raw response: {response_text}")
-            logger.warning(f"[File Search] Cleaned text: {cleaned_text}")
-            return jsonify({'success': True, 'data': {'formatted_response': response_text}})
+                for chunk in response_stream:
+                    chunk_text = getattr(chunk, "text", None)
+                    if not chunk_text:
+                        continue
+                    full_text += chunk_text
+                    yield chunk_text
+
+                cleaned_text = clean_response_text(full_text)
+                try:
+                    outfit_data = json.loads(cleaned_text)
+                    outfit_count = len(outfit_data.get('outfit', []))
+                    logger.info(f"[File Search] Complete. Selected {outfit_count} items for outfit.")
+                    logger.debug(f"[File Search] Outfit data: {json.dumps(outfit_data, indent=2)}")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"[File Search] JSONDecodeError: {e}")
+                    logger.warning(f"[File Search] Raw response: {full_text}")
+                    logger.warning(f"[File Search] Cleaned text: {cleaned_text}")
+            except Exception as e:
+                logger.error(f"Recommendation streaming error: {str(e)}")
+                yield f"\n[ERROR] {str(e)}"
+
+        return Response(stream_with_context(stream_recommendation()), mimetype='text/plain; charset=utf-8')
 
     except Exception as e:
         logger.error(f"Recommendation error: {str(e)}")
