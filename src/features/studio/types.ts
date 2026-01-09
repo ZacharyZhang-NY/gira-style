@@ -1,5 +1,11 @@
 export type StageState = "pending" | "loading" | "done" | "error";
 
+export type StageErrors = {
+  a?: string;
+  b?: string;
+  c?: string;
+};
+
 export type RecommendationItem = {
   item_name?: string;
   sku?: string;
@@ -7,6 +13,8 @@ export type RecommendationItem = {
   link?: string;
   reason?: string;
   image?: string;
+  image_url?: string;
+  imageUrl?: string;
 };
 
 export type RecommendationPayload = {
@@ -29,6 +37,7 @@ export type StudioVersion = {
     b: StageState;
     c: StageState;
   };
+  stageErrors?: StageErrors;
   recommendation?: RecommendationPayload;
   generatedImage?: string;
   generatedVideo?: string;
@@ -39,4 +48,3 @@ export type StudioState = {
   selectedIndex: number;
   updatedAt: string;
 };
-

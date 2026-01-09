@@ -2,6 +2,8 @@
 .env
 .env*.local
 .venv/
+.next
+node_modules
 venv/
 
 # Secrets and Credentials
@@ -10,6 +12,7 @@ venv/
 !package-lock.json
 api/sa.json
 **/sa.json
+api/env.py
 *-credentials.json
 *-key.json
 *.pem

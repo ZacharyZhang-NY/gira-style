@@ -9,11 +9,12 @@ import { cn } from "@/lib/cn";
 import { luxTween, LUX_DURATION } from "@/lib/motion";
 
 import type { RecommendationItem } from "../types";
+import { getItemImage } from "../item";
 import { makeSwatchStyle } from "../swatch";
 
-function isHttpUrl(value: unknown): value is string {
+function isImageUrl(value: unknown): value is string {
   if (typeof value !== "string") return false;
-  return value.startsWith("http://") || value.startsWith("https://");
+  return value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:image/");
 }
 
 function ItemMeta({ color }: { color?: string }) {
@@ -46,8 +47,9 @@ function QuickView({ isOpen, item, index, onClose }: QuickViewProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
 
-  const href = isHttpUrl(item?.link) ? item?.link : undefined;
-  const hasImage = isHttpUrl(item?.image);
+  const href = isImageUrl(item?.link) ? item?.link : undefined;
+  const imageUrl = getItemImage(item);
+  const hasImage = isImageUrl(imageUrl);
   const swatchSeed = [item?.item_name, item?.color, String(index)].filter(Boolean).join(" · ");
 
   return (
@@ -74,7 +76,7 @@ function QuickView({ isOpen, item, index, onClose }: QuickViewProps) {
               exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 12, scale: 0.99 }}
               transition={transition}
             >
-              <Surface className="p-6 sm:p-8">
+              <Surface tone="flush" className="ui-glass-liquid-strong p-6 sm:p-8">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">Details</div>
@@ -106,24 +108,19 @@ function QuickView({ isOpen, item, index, onClose }: QuickViewProps) {
                 <div className="mt-6 grid gap-6 md:grid-cols-2">
                   <div
                     className={cn(
-                      "relative h-56 w-full overflow-hidden rounded-2xl",
+                      "relative h-72 w-full overflow-hidden rounded-2xl sm:h-96",
                       "shadow-lux-md",
-                      "bg-[linear-gradient(135deg,rgb(var(--glass-border)_/_0.10),rgb(var(--glass-border)_/_0.04))]",
+                      "bg-transparent",
                     )}
                   >
-                    <div className="absolute inset-0" style={makeSwatchStyle(swatchSeed)} aria-hidden="true" />
                     {hasImage ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={item.image!}
+                        src={imageUrl!}
                         alt={item.item_name ? `${item.item_name} product image` : "Recommended product image"}
-                        className="absolute inset-0 h-full w-full object-cover"
+                        className="absolute inset-0 h-full w-full object-contain p-4"
                       />
                     ) : null}
-                    <div
-                      className="pointer-events-none absolute inset-0 shadow-[inset_0_0_0_1px_rgb(var(--glass-border)_/_0.24)]"
-                      aria-hidden="true"
-                    />
                   </div>
 
                   <div className="space-y-4">
@@ -162,9 +159,8 @@ export function ProductGrid({ items }: { items: RecommendationItem[] }) {
     <>
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((item, idx) => {
-          const hasImage = isHttpUrl(item.image);
-          const swatchSeed = [item.item_name, item.color, String(idx)].filter(Boolean).join(" · ");
-
+          const imageUrl = getItemImage(item);
+          const hasImage = isImageUrl(imageUrl);
           return (
             <motion.button
               key={`${item.sku || item.item_name || "item"}-${idx}`}
@@ -180,33 +176,28 @@ export function ProductGrid({ items }: { items: RecommendationItem[] }) {
             >
               <div
                 className={cn(
-                  "relative h-52 w-full overflow-hidden rounded-xl",
+                  "relative h-60 w-full overflow-hidden rounded-xl bg-transparent",
                   "transition-[transform,filter,box-shadow] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
                   shouldReduceMotion ? "duration-0" : "duration-[1800ms]",
-                  "filter grayscale group-hover:grayscale-0",
+                  "filter grayscale-0",
                   "will-change-transform",
                   "group-hover:shadow-lux-md",
                   "group-hover:scale-[1.02] motion-reduce:transform-none",
                 )}
-                style={makeSwatchStyle(swatchSeed)}
               >
                 {hasImage ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={item.image!}
+                    src={imageUrl!}
                     alt={item.item_name ? `${item.item_name} product image` : "Recommended product image"}
                     className={cn(
-                      "absolute inset-0 h-full w-full object-cover",
-                      "opacity-0 transition-opacity ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                      shouldReduceMotion ? "duration-0" : "duration-[1800ms]",
-                      "group-hover:opacity-100",
+                      "absolute inset-0 h-full w-full object-contain p-3",
+                      "transition-opacity ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                      shouldReduceMotion ? "duration-0" : "duration-[900ms]",
+                      "opacity-100",
                     )}
                   />
                 ) : null}
-                <div
-                  className="pointer-events-none absolute inset-0 shadow-[inset_0_0_0_1px_rgb(var(--glass-border)_/_0.28)]"
-                  aria-hidden="true"
-                />
               </div>
 
               <div className="mt-4">

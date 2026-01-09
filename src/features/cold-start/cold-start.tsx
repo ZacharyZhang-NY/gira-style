@@ -105,7 +105,7 @@ export function ColdStart() {
     <div className="min-h-screen">
       <header className="sticky top-0 z-30">
         <div className="mx-auto max-w-6xl px-6 pt-5">
-          <div className="flex items-center justify-between gap-4 rounded-full px-4 py-3 ui-glass-subtle">
+          <div className="flex items-center justify-between gap-4 rounded-full px-4 py-3 ui-glass-liquid">
             <Link href="/" className="flex items-baseline gap-2">
               <span className="font-display text-lg leading-none tracking-tight text-text">GiraStyle</span>
               <span className="hidden text-[11px] font-semibold uppercase tracking-[0.22em] text-muted sm:inline">

@@ -1,6 +1,8 @@
 import logging
 import json
 import os
+import sys
+import mimetypes
 import base64
 import time
 import urllib.request
@@ -11,8 +13,20 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
 # Load environment variables from .env file
 load_dotenv()
+
+try:
+    from api.env import api_key as GEMINI_API_KEY
+except ImportError:
+    try:
+        from env import api_key as GEMINI_API_KEY
+    except ImportError:
+        GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 from api.constants import (
     IMG_GEN_MODEL,
@@ -37,7 +51,6 @@ CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')
 CORS(app, resources={r"/api/*": {"origins": CORS_ORIGINS}})
 
 # Initialize Gemini client
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 ALLOWED_IMAGE_MIME_TYPES = ('image/png', 'image/jpeg', 'image/webp')
 VIDEO_POLL_INTERVAL_SECONDS = float(os.getenv('VIDEO_POLL_INTERVAL_SECONDS', '3'))
 VIDEO_MAX_WAIT_SECONDS = float(os.getenv('VIDEO_MAX_WAIT_SECONDS', '120'))
@@ -112,7 +125,16 @@ def generate_video_from_image(image_bytes, clothing_description, mime_type):
             error_payload = error_payload.to_dict()
         raise RuntimeError(f"Video generation failed: {error_payload}")
 
+    if hasattr(operation, "to_dict"):
+        logger.info("Video generation operation payload: %s", json.dumps(operation.to_dict(), default=str))
+
     response = operation.response or operation.result
+    if response is None:
+        logger.warning("Video generation returned no response payload.")
+    elif hasattr(response, "to_dict"):
+        logger.info("Video generation response payload: %s", json.dumps(response.to_dict(), default=str))
+    else:
+        logger.info("Video generation response type: %s", type(response))
     if not response or not response.generated_videos:
         raise RuntimeError("No videos were generated.")
 
@@ -272,26 +294,53 @@ def generate_image():
 
         contents = []
         successful_items = []
-        
+
+        def resolve_image_bytes(image_value):
+            if not image_value or not isinstance(image_value, str):
+                return None, None
+            if image_value.startswith('data:'):
+                header, encoded = image_value.split(',', 1)
+                mime_type = header.split(':')[1].split(';')[0] if ':' in header else 'image/jpeg'
+                return base64.b64decode(encoded), mime_type
+            if image_value.startswith('http://') or image_value.startswith('https://'):
+                request_obj = urllib.request.Request(
+                    image_value,
+                    headers={'User-Agent': 'Mozilla/5.0'},
+                )
+                with urllib.request.urlopen(request_obj, timeout=30) as response:
+                    image_bytes = response.read()
+                    mime_type = response.headers.get_content_type()
+                if not mime_type or mime_type == 'application/octet-stream':
+                    guessed = mimetypes.guess_type(image_value)[0]
+                    mime_type = guessed or mime_type
+                return image_bytes, mime_type
+            return None, None
+
         for item in outfit_items:
             item_name = item.get('item_name')
             image_base64 = item.get('image_base64')
-            
-            if image_base64 and image_base64.startswith('data:'):
-                try:
-                    header, encoded = image_base64.split(',', 1)
-                    mime_type = header.split(':')[1].split(';')[0] if ':' in header else 'image/jpeg'
-                    if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
-                        logger.warning(f"Unsupported image mime type for {item_name}: {mime_type}")
-                        continue
-                    image_bytes = base64.b64decode(encoded)
-                    
-                    contents.append(types.Part.from_text(text=f"This image shows the {item_name}."))
-                    contents.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
-                    successful_items.append(item_name)
-                    logger.debug(f"Added image for {item_name}, size: {len(image_bytes)} bytes")
-                except Exception as e:
-                    logger.warning(f"Failed to decode base64 for {item_name}: {e}")
+            image_url = item.get('image')
+            image_url = image_url or item.get('image_url') or item.get('imageUrl')
+
+            image_value = image_base64 or image_url
+            if not image_value:
+                logger.warning(f"No image provided for {item_name} (keys: {list(item.keys())})")
+                continue
+
+            try:
+                image_bytes, mime_type = resolve_image_bytes(image_value)
+                if not image_bytes or not mime_type:
+                    logger.warning(f"Missing image bytes for {item_name}")
+                    continue
+                if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
+                    logger.warning(f"Unsupported image mime type for {item_name}: {mime_type}")
+                    continue
+                contents.append(types.Part.from_text(text=f"This image shows the {item_name}."))
+                contents.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+                successful_items.append(item_name)
+                logger.debug(f"Added image for {item_name}, size: {len(image_bytes)} bytes")
+            except Exception as e:
+                logger.warning(f"Failed to load image for {item_name}: {e}")
         
         if len(successful_items) == 0:
             return jsonify({'error': 'No valid images received. Unable to generate outfit visualization.'}), 500

@@ -1,6 +1,4 @@
 "use client";
-
-import { useReducedMotion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
@@ -12,11 +10,10 @@ import { ThemeToggle } from "@/features/theme/theme-toggle";
 import { readLocalStorageJson, removeLocalStorageItem, writeLocalStorageJson } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
+import { fetchRecommendation, generateImage, generateVideo } from "./api";
 import { MotionPreview } from "./components/motion-preview";
 import { ProductGrid } from "./components/product-grid";
 import { ChatPanel } from "./components/chat-panel";
-import { createLookboardDataUri } from "./lookboard";
-import { mockRecommendation } from "./mock";
 import type { RecommendationPayload, StudioState, StudioVersion } from "./types";
 
 type StoredColdStart = {
@@ -50,6 +47,30 @@ function getPrimaryShopItems(payload: RecommendationPayload, max = 4) {
   return accessories.slice(0, max);
 }
 
+function getOutfitItems(payload: RecommendationPayload) {
+  if (Array.isArray(payload.outfit) && payload.outfit.length) return payload.outfit;
+  if (Array.isArray(payload.accessories)) return payload.accessories;
+  return [];
+}
+
+function buildRequestText(requestText: string, answers: ColdStartAnswers | null) {
+  if (!answers) return requestText;
+  const parts = [
+    answers.q1 ? `Vibe: ${answers.q1}.` : "",
+    answers.q2 ? `Occasion focus: ${answers.q2}.` : "",
+    answers.q3 ? `Priority: ${answers.q3}.` : "",
+  ].filter(Boolean);
+
+  if (!parts.length) return requestText;
+  return `${requestText}\n\nStyle context: ${parts.join(" ")}`;
+}
+
+function formatError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error.trim();
+  return fallback;
+}
+
 function normalizeStudioState(raw: unknown): StudioState {
   if (!raw || typeof raw !== "object") return EMPTY_STUDIO_STATE;
   const candidate = raw as Partial<StudioState>;
@@ -65,7 +86,6 @@ function normalizeStudioState(raw: unknown): StudioState {
 
 export function Studio() {
   const router = useRouter();
-  const shouldReduceMotion = useReducedMotion();
 
   const [hydrated, setHydrated] = React.useState(false);
   const [coldStart, setColdStart] = React.useState<ColdStartAnswers | null>(null);
@@ -73,6 +93,8 @@ export function Studio() {
   const [isGenerating, setIsGenerating] = React.useState(false);
   const autoRequestRef = React.useRef<string | null>(null);
   const hasAutoRunRef = React.useRef(false);
+  const runTokenRef = React.useRef(0);
+  const abortRef = React.useRef<AbortController | null>(null);
 
   const versionsRef = React.useRef<StudioVersion[]>([]);
   React.useEffect(() => {
@@ -98,10 +120,37 @@ export function Studio() {
     writeLocalStorageJson(STORAGE_KEYS.studioVersions, payload);
   }, [hydrated, state]);
 
+  const setStageError = React.useCallback((id: string, stage: "a" | "b" | "c", error: unknown) => {
+    const fallback =
+      stage === "a"
+        ? "Recommendation failed. Please try again."
+        : stage === "b"
+          ? "Image generation failed. Please try again."
+          : "Video generation failed. Please try again.";
+    const message = formatError(error, fallback);
+    setState((prev) => ({
+      ...prev,
+      versions: prev.versions.map((v) => {
+        if (v.id !== id) return v;
+        return {
+          ...v,
+          stages: { ...v.stages, [stage]: "error" },
+          stageErrors: { ...(v.stageErrors || {}), [stage]: message },
+        };
+      }),
+    }));
+  }, []);
+
   const runSequence = React.useCallback(
     async (requestText: string) => {
       const trimmed = requestText.trim();
       if (!trimmed) return;
+
+      runTokenRef.current += 1;
+      const runToken = runTokenRef.current;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       removeLocalStorageItem(STORAGE_KEYS.intentDraft);
       setIsGenerating(true);
@@ -117,6 +166,7 @@ export function Studio() {
         createdAt: new Date().toISOString(),
         feedback: "",
         stages: { a: "loading", b: "pending", c: "pending" },
+        stageErrors: {},
       };
 
       setState({
@@ -126,41 +176,73 @@ export function Studio() {
       });
 
       const history = previous
-        .filter((v) => v.recommendation)
+        .filter(
+          (v): v is StudioVersion & { recommendation: RecommendationPayload } => Boolean(v.recommendation),
+        )
         .map((v) => ({ user: v.request, assistant: v.recommendation }));
 
-      void history;
+      const requestWithContext = buildRequestText(trimmed, coldStart);
 
-      if (!shouldReduceMotion) await new Promise((r) => setTimeout(r, 900));
-      const recommendation = mockRecommendation({ requestText: trimmed, answers: coldStart, versionNumber });
+      let stage: "a" | "b" | "c" = "a";
+      const isStale = () => runTokenRef.current !== runToken;
 
-      setState((prev) => ({
-        ...prev,
-        versions: prev.versions.map((v) =>
-          v.id === id
-            ? { ...v, stages: { ...v.stages, a: "done", b: "loading" }, recommendation }
-            : v,
-        ),
-      }));
+      try {
+        const recommendation = await fetchRecommendation({
+          requestText: requestWithContext,
+          conversationHistory: history,
+        }, { signal: controller.signal });
 
-      if (!shouldReduceMotion) await new Promise((r) => setTimeout(r, 1100));
-      const lookboard = createLookboardDataUri({ items: getPrimaryShopItems(recommendation, 4) });
-      setState((prev) => ({
-        ...prev,
-        versions: prev.versions.map((v) =>
-          v.id === id ? { ...v, stages: { ...v.stages, b: "done", c: "loading" }, generatedImage: lookboard } : v,
-        ),
-      }));
+        if (isStale()) return;
 
-      if (!shouldReduceMotion) await new Promise((r) => setTimeout(r, 700));
-      setState((prev) => ({
-        ...prev,
-        versions: prev.versions.map((v) => (v.id === id ? { ...v, stages: { ...v.stages, c: "done" } } : v)),
-      }));
+        setState((prev) => ({
+          ...prev,
+          versions: prev.versions.map((v) =>
+            v.id === id
+              ? { ...v, stages: { ...v.stages, a: "done", b: "loading" }, recommendation }
+              : v,
+          ),
+        }));
 
-      setIsGenerating(false);
+        stage = "b";
+        const outfitItems = getOutfitItems(recommendation);
+        const imageData = await generateImage(outfitItems, { signal: controller.signal });
+
+        if (isStale()) return;
+
+        setState((prev) => ({
+          ...prev,
+          versions: prev.versions.map((v) =>
+            v.id === id
+              ? { ...v, stages: { ...v.stages, b: "done", c: "loading" }, generatedImage: imageData }
+              : v,
+          ),
+        }));
+
+        stage = "c";
+        const video = await generateVideo(imageData, outfitItems, { signal: controller.signal });
+        const videoSource = video.videoData || video.videoUri;
+
+        if (isStale()) return;
+
+        setState((prev) => ({
+          ...prev,
+          versions: prev.versions.map((v) =>
+            v.id === id ? { ...v, stages: { ...v.stages, c: "done" }, generatedVideo: videoSource } : v,
+          ),
+        }));
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setStageError(id, stage, error);
+      } finally {
+        if (runTokenRef.current === runToken) {
+          setIsGenerating(false);
+          abortRef.current = null;
+        }
+      }
     },
-    [coldStart, shouldReduceMotion],
+    [coldStart, setStageError],
   );
 
   React.useEffect(() => {
@@ -183,12 +265,17 @@ export function Studio() {
   const disableNext = isGenerating || selectedIndex >= versions.length - 1;
 
   function startOver() {
+    runTokenRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+
     removeLocalStorageItem(STORAGE_KEYS.coldStart);
     removeLocalStorageItem(STORAGE_KEYS.studioVersions);
     removeLocalStorageItem(STORAGE_KEYS.intentDraft);
 
     setColdStart(null);
     setState(EMPTY_STUDIO_STATE);
+    setIsGenerating(false);
     autoRequestRef.current = null;
     hasAutoRunRef.current = false;
 
@@ -210,8 +297,6 @@ export function Studio() {
 
   function recordFeedback(value: "up" | "down") {
     if (!active) return;
-    if (isGenerating) return;
-
     updateVersion(active.id, (v) => ({ ...v, feedback: value }));
   }
 
@@ -228,11 +313,23 @@ export function Studio() {
 
     const versionMessages = versions.flatMap((v, idx) => {
       const isSelected = idx === selectedIndex;
-      const assistantText = v.recommendation?.description
-        ? `Here’s the direction:\n${v.recommendation.description}\n\nWant it sharper, softer, darker, or more relaxed? Tell me.`
-        : v.stages.a === "loading"
-          ? "Give me a moment—I’m pulling pieces that match your vibe."
-          : "I’m ready when you are.";
+      const formattedResponse = v.recommendation?.formatted_response?.trim();
+      const description = v.recommendation?.description?.trim();
+      const baseText = formattedResponse
+        ? formattedResponse
+        : description
+          ? `Here’s the direction:\n${description}\n\nWant it sharper, softer, darker, or more relaxed? Tell me.`
+          : v.stages.a === "loading"
+            ? "Give me a moment—I’m pulling pieces that match your vibe."
+            : "I’m ready when you are.";
+
+      const errorNotes = [
+        v.stageErrors?.a ? `Recommendation issue: ${v.stageErrors.a}` : "",
+        v.stageErrors?.b ? `Image generation issue: ${v.stageErrors.b}` : "",
+        v.stageErrors?.c ? `Video preview issue: ${v.stageErrors.c}` : "",
+      ].filter(Boolean);
+
+      const assistantText = errorNotes.length ? `${baseText}\n\n${errorNotes.join("\n")}` : baseText;
 
       return [
         {
@@ -261,7 +358,7 @@ export function Studio() {
     <div className="min-h-screen">
       <header className="sticky top-0 z-30">
         <div className="mx-auto max-w-7xl px-6 pt-5">
-          <div className="flex items-center justify-between gap-4 rounded-full px-4 py-3 ui-glass-subtle">
+          <div className="flex items-center justify-between gap-4 rounded-full px-4 py-3 ui-glass-liquid">
             <Link href="/" className="flex items-baseline gap-2">
               <span className="font-display text-lg leading-none tracking-tight text-text">GiraStyle</span>
               <span className="hidden text-[11px] font-semibold uppercase tracking-[0.22em] text-muted sm:inline">
@@ -315,42 +412,41 @@ export function Studio() {
               </Surface>
 
               <div className="space-y-8">
-                <div className="mx-auto w-full max-w-4xl">
-                  <Surface className="overflow-hidden p-0">
-                    {!active ? (
-                      <div className="h-[420px] w-full sm:h-[500px]" />
-                    ) : active.stages.b === "loading" ? (
-                      <div className="h-[420px] w-full motion-safe:animate-pulse sm:h-[500px]" />
-                    ) : active.generatedImage ? (
-                      <div className="group relative h-[420px] w-full overflow-hidden sm:h-[500px]">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={active.generatedImage}
-                          alt="Outfit visualization"
-                          className="absolute inset-0 h-full w-full object-contain p-4 filter grayscale transition-[filter,transform] duration-[1800ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none group-hover:grayscale-0 group-hover:scale-[1.01] motion-reduce:transform-none"
-                        />
-                        <div className="absolute left-4 top-4 rounded-full bg-glass-highlight/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-text">
-                          Outfit visualization
-                        </div>
-                        <div
-                          className="pointer-events-none absolute inset-0 shadow-[inset_0_0_0_1px_rgb(var(--glass-border)_/_0.16)]"
-                          aria-hidden="true"
-                        />
-                      </div>
-                    ) : (
-                      <div className="h-[420px] w-full sm:h-[500px]" />
-                    )}
-                  </Surface>
-                </div>
+                <div className="mx-auto w-full max-w-6xl">
+                  <div className="grid gap-6 lg:grid-cols-2">
+                    <Surface className="overflow-hidden p-0">
+                      <div className="relative aspect-[9/16] w-full">
+                        {!active ? (
+                          <div className="absolute inset-0" />
+                        ) : active.stages.b === "loading" ? (
+                          <div className="absolute inset-0 motion-safe:animate-pulse" />
+                        ) : active.generatedImage ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={active.generatedImage}
+                            alt="Outfit preview"
+                            className="absolute inset-0 h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="absolute inset-0" />
+                        )}
 
-                <div className="mx-auto w-full max-w-4xl">
-                  <Surface className="overflow-hidden p-0">
-                    <MotionPreview
-                      state={active?.stages.c ?? "pending"}
-                      image={active?.generatedImage}
-                      video={active?.generatedVideo}
-                    />
-                  </Surface>
+                        <div className="absolute left-4 top-4 flex items-center gap-3">
+                          <div className="rounded-full bg-glass-highlight/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-text">
+                            Outfit preview
+                          </div>
+                        </div>
+                      </div>
+                    </Surface>
+
+                    <Surface className="overflow-hidden p-0">
+                      <MotionPreview
+                        state={active?.stages.c ?? "pending"}
+                        image={active?.generatedImage}
+                        video={active?.generatedVideo}
+                      />
+                    </Surface>
+                  </div>
                 </div>
               </div>
             </div>
@@ -363,6 +459,7 @@ export function Studio() {
               disablePrev={disablePrev}
               disableNext={disableNext}
               disableComposer={isGenerating || !hydrated}
+              disableFeedback={!active}
               feedback={active?.feedback || ""}
               messages={messages}
               onPrevVersion={() => selectVersion(selectedIndex - 1)}
