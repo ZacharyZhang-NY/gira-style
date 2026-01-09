@@ -10,6 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
 import { luxTween } from "@/lib/motion";
 
+import { VideoToggle } from "./video-toggle";
+
 type ChatMessage = {
   id: string;
   role: "assistant" | "user";
@@ -26,12 +28,15 @@ type ChatPanelProps = {
   disableNext: boolean;
   disableComposer: boolean;
   disableFeedback: boolean;
+  disableVideoToggle: boolean;
+  videoEnabled: boolean;
   feedback: "" | "up" | "down";
   messages: ChatMessage[];
   onPrevVersion: () => void;
   onNextVersion: () => void;
   onFeedback: (value: "up" | "down") => void;
   onSubmitRequest: (value: string) => void;
+  onToggleVideo: (value: boolean) => void;
 };
 
 function ChatBubble({ msg }: { msg: ChatMessage }) {
@@ -71,12 +76,15 @@ export function ChatPanel({
   disableNext,
   disableComposer,
   disableFeedback,
+  disableVideoToggle,
+  videoEnabled,
   feedback,
   messages,
   onPrevVersion,
   onNextVersion,
   onFeedback,
   onSubmitRequest,
+  onToggleVideo,
 }: ChatPanelProps) {
   const shouldReduceMotion = useReducedMotion();
   const [value, setValue] = React.useState("");
@@ -191,6 +199,20 @@ export function ChatPanel({
 
       <div className="px-6 py-5">
         <form onSubmit={submit} className="space-y-2">
+          <div className="flex items-center justify-between rounded-full px-4 py-2 ui-glass-subtle">
+            <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
+              <span>Video</span>
+              <span
+                className={cn(
+                  "rounded-full px-2 py-1 text-[10px] font-semibold tracking-[0.24em]",
+                  videoEnabled ? "text-text" : "text-muted/70",
+                )}
+              >
+                {videoEnabled ? "On" : "Off"}
+              </span>
+            </div>
+            <VideoToggle enabled={videoEnabled} disabled={disableVideoToggle} onToggle={onToggleVideo} />
+          </div>
           <div className="flex items-end gap-4">
             <label htmlFor="refineInput" className="sr-only">
               New request

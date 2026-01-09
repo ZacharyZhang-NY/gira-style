@@ -1,13 +1,11 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
-import { Play } from "lucide-react";
-import * as React from "react";
-
 import { cn } from "@/lib/cn";
 import { luxTween, LUX_DURATION } from "@/lib/motion";
 
 import type { StageState } from "../types";
+import { MediaPlaceholder } from "./media-placeholder";
 
 function isVideoSrc(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -22,15 +20,19 @@ type MotionPreviewProps = {
   state: StageState;
   image?: string;
   video?: string;
+  videoEnabled: boolean;
 };
 
-export function MotionPreview({ state, image, video }: MotionPreviewProps) {
+export function MotionPreview({ state, image, video, videoEnabled }: MotionPreviewProps) {
   const shouldReduceMotion = useReducedMotion();
   const transition = luxTween(shouldReduceMotion, LUX_DURATION.base);
 
   const videoSrc = isVideoSrc(video) ? video : undefined;
   const hasImage = typeof image === "string" && image.length > 0;
   const showLoading = state === "loading";
+  const showMock = !videoEnabled;
+  const showVideo = !showMock && state === "done" && Boolean(videoSrc);
+  const showImage = !showMock && state === "done" && !videoSrc && hasImage;
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden">
@@ -43,7 +45,13 @@ export function MotionPreview({ state, image, video }: MotionPreviewProps) {
         aria-hidden="true"
       />
 
-      {state === "done" && videoSrc ? (
+      {showLoading ? (
+        <MediaPlaceholder variant="loading" />
+      ) : showMock ? (
+        <MediaPlaceholder variant="mock" />
+      ) : null}
+
+      {showVideo ? (
         <video
           className="absolute inset-0 h-full w-full origin-center object-cover scale-[1.34]"
           src={videoSrc}
@@ -52,7 +60,7 @@ export function MotionPreview({ state, image, video }: MotionPreviewProps) {
           playsInline
           autoPlay={!shouldReduceMotion}
         />
-      ) : state === "done" && hasImage ? (
+      ) : showImage ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={image}

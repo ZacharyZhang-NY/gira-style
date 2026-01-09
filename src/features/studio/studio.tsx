@@ -11,6 +11,7 @@ import { readLocalStorageJson, removeLocalStorageItem, writeLocalStorageJson } f
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
 import { fetchRecommendation, generateImage, generateVideo } from "./api";
+import { MediaPlaceholder } from "./components/media-placeholder";
 import { MotionPreview } from "./components/motion-preview";
 import { ProductGrid } from "./components/product-grid";
 import { ChatPanel } from "./components/chat-panel";
@@ -91,6 +92,7 @@ export function Studio() {
   const [coldStart, setColdStart] = React.useState<ColdStartAnswers | null>(null);
   const [state, setState] = React.useState<StudioState>(EMPTY_STUDIO_STATE);
   const [isGenerating, setIsGenerating] = React.useState(false);
+  const [videoEnabled, setVideoEnabled] = React.useState(true);
   const autoRequestRef = React.useRef<string | null>(null);
   const hasAutoRunRef = React.useRef(false);
   const runTokenRef = React.useRef(0);
@@ -111,6 +113,9 @@ export function Studio() {
     const storedStudio = readLocalStorageJson<StudioState>(STORAGE_KEYS.studioVersions);
     if (storedStudio) setState(normalizeStudioState(storedStudio));
 
+    const storedVideo = readLocalStorageJson<boolean>(STORAGE_KEYS.videoPreview);
+    if (typeof storedVideo === "boolean") setVideoEnabled(storedVideo);
+
     setHydrated(true);
   }, []);
 
@@ -119,6 +124,11 @@ export function Studio() {
     const payload: StudioState = { ...state, updatedAt: new Date().toISOString() };
     writeLocalStorageJson(STORAGE_KEYS.studioVersions, payload);
   }, [hydrated, state]);
+
+  React.useEffect(() => {
+    if (!hydrated) return;
+    writeLocalStorageJson(STORAGE_KEYS.videoPreview, videoEnabled);
+  }, [hydrated, videoEnabled]);
 
   const setStageError = React.useCallback((id: string, stage: "a" | "b" | "c", error: unknown) => {
     const fallback =
@@ -213,10 +223,16 @@ export function Studio() {
           ...prev,
           versions: prev.versions.map((v) =>
             v.id === id
-              ? { ...v, stages: { ...v.stages, b: "done", c: "loading" }, generatedImage: imageData }
+              ? {
+                  ...v,
+                  stages: { ...v.stages, b: "done", c: videoEnabled ? "loading" : "done" },
+                  generatedImage: imageData,
+                }
               : v,
           ),
         }));
+
+        if (!videoEnabled) return;
 
         stage = "c";
         const video = await generateVideo(imageData, outfitItems, { signal: controller.signal });
@@ -242,7 +258,7 @@ export function Studio() {
         }
       }
     },
-    [coldStart, setStageError],
+    [coldStart, setStageError, videoEnabled],
   );
 
   React.useEffect(() => {
@@ -419,7 +435,7 @@ export function Studio() {
                         {!active ? (
                           <div className="absolute inset-0" />
                         ) : active.stages.b === "loading" ? (
-                          <div className="absolute inset-0 motion-safe:animate-pulse" />
+                          <MediaPlaceholder variant="loading" />
                         ) : active.generatedImage ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
@@ -444,6 +460,7 @@ export function Studio() {
                         state={active?.stages.c ?? "pending"}
                         image={active?.generatedImage}
                         video={active?.generatedVideo}
+                        videoEnabled={videoEnabled}
                       />
                     </Surface>
                   </div>
@@ -460,12 +477,15 @@ export function Studio() {
               disableNext={disableNext}
               disableComposer={isGenerating || !hydrated}
               disableFeedback={!active}
+              disableVideoToggle={isGenerating || !hydrated}
+              videoEnabled={videoEnabled}
               feedback={active?.feedback || ""}
               messages={messages}
               onPrevVersion={() => selectVersion(selectedIndex - 1)}
               onNextVersion={() => selectVersion(selectedIndex + 1)}
               onFeedback={recordFeedback}
               onSubmitRequest={runSequence}
+              onToggleVideo={(value) => setVideoEnabled(value)}
             />
           </div>
         </div>

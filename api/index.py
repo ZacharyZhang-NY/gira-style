@@ -105,6 +105,7 @@ def generate_video_from_image(image_bytes, clothing_description, mime_type):
         number_of_videos=1,
         aspect_ratio="9:16",
         resolution="720p",
+        person_generation="allow_adult",
     )
     logger.info(f"Sending reference image and prompt to {VIDEO_GEN_MODEL}...")
     operation = gemini_client.models.generate_videos(
@@ -125,16 +126,43 @@ def generate_video_from_image(image_bytes, clothing_description, mime_type):
             error_payload = error_payload.to_dict()
         raise RuntimeError(f"Video generation failed: {error_payload}")
 
-    if hasattr(operation, "to_dict"):
-        logger.info("Video generation operation payload: %s", json.dumps(operation.to_dict(), default=str))
+    def dump_genai_payload(obj):
+        if obj is None:
+            return None
+        if hasattr(obj, "model_dump"):
+            try:
+                return obj.model_dump(exclude_none=True)
+            except TypeError:
+                return obj.model_dump()
+        if hasattr(obj, "to_dict"):
+            return obj.to_dict()
+        if hasattr(obj, "__dict__"):
+            return obj.__dict__
+        return str(obj)
+
+    if hasattr(operation, "to_dict") or hasattr(operation, "model_dump"):
+        logger.info(
+            "Video generation operation payload: %s",
+            json.dumps(dump_genai_payload(operation), default=str),
+        )
 
     response = operation.response or operation.result
     if response is None:
         logger.warning("Video generation returned no response payload.")
-    elif hasattr(response, "to_dict"):
-        logger.info("Video generation response payload: %s", json.dumps(response.to_dict(), default=str))
+    elif hasattr(response, "to_dict") or hasattr(response, "model_dump"):
+        logger.info(
+            "Video generation response payload: %s",
+            json.dumps(dump_genai_payload(response), default=str),
+        )
     else:
         logger.info("Video generation response type: %s", type(response))
+    if response:
+        filtered_count = getattr(response, "rai_media_filtered_count", None)
+        filtered_reasons = getattr(response, "rai_media_filtered_reasons", None)
+        if filtered_count or filtered_reasons:
+            raise RuntimeError(
+                f"Video generation filtered: count={filtered_count}, reasons={filtered_reasons}"
+            )
     if not response or not response.generated_videos:
         raise RuntimeError("No videos were generated.")
 
