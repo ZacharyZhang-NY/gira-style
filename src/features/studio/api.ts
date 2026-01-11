@@ -11,6 +11,7 @@ type ConversationTurn = {
 type RecommendationRequest = {
   requestText: string;
   conversationHistory: ConversationTurn[];
+  systemPrompt?: string;
 };
 
 type VideoResponse = {
@@ -184,6 +185,7 @@ export async function fetchRecommendation(
     body: JSON.stringify({
       userInput: request.requestText,
       conversationHistory: request.conversationHistory,
+      systemPrompt: request.systemPrompt,
     }),
     signal: options.signal,
   });

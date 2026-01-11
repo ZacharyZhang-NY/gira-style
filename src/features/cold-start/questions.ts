@@ -1,11 +1,17 @@
 export type ColdStartQuestionId = "q1" | "q2" | "q3";
 
-export type ColdStartAnswers = Record<ColdStartQuestionId, string>;
+export type ColdStartAnswers = {
+  q1: string;
+  q2: string[];
+  q3: string[];
+  q4: string;
+};
 
 export type ColdStartQuestion = {
   id: ColdStartQuestionId;
   title: string;
   hint: string;
+  multi?: boolean;
   options: Array<{
     value: string;
     title: string;
@@ -44,7 +50,8 @@ export const COLD_START_QUESTIONS: ColdStartQuestion[] = [
   {
     id: "q2",
     title: "Where do you need outfits the most?",
-    hint: "We’ll optimize for the moments you repeat—not the one-off fantasy.",
+    hint: "We’ll optimize for the moments you repeat—not the one-off fantasy. (Select all that apply.)",
+    multi: true,
     options: [
       {
         value: "Everyday",
@@ -71,7 +78,8 @@ export const COLD_START_QUESTIONS: ColdStartQuestion[] = [
   {
     id: "q3",
     title: "Last one: what matters most when you get dressed?",
-    hint: "This sets your default trade-offs (comfort vs. silhouette vs. texture).",
+    hint: "This sets your default trade-offs (comfort vs. silhouette vs. texture). (Select all that apply.)",
+    multi: true,
     options: [
       {
         value: "Comfort first",
@@ -99,6 +107,7 @@ export const COLD_START_QUESTIONS: ColdStartQuestion[] = [
 
 export const EMPTY_COLD_START_ANSWERS: ColdStartAnswers = {
   q1: "",
-  q2: "",
-  q3: "",
+  q2: [],
+  q3: [],
+  q4: "",
 };

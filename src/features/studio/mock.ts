@@ -2,13 +2,21 @@ import type { ColdStartAnswers } from "@/features/cold-start/questions";
 
 import type { RecommendationPayload } from "./types";
 
+function normalizeMultiSelect(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
 export function mockRecommendation(args: {
   requestText: string;
   answers: Partial<ColdStartAnswers> | null;
   versionNumber: number;
 }): RecommendationPayload {
   const vibe = args.answers?.q1 || "";
-  const priority = args.answers?.q3 || "";
+  const priority = normalizeMultiSelect(args.answers?.q3)[0] || "";
 
   const tone =
     vibe === "Experimental Edge"

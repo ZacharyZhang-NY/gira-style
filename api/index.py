@@ -199,6 +199,10 @@ def get_recommendation():
         data = request.get_json(silent=True) or {}
         user_input = str(data.get('userInput', '')).strip()
         conversation_history = data.get('conversationHistory', [])
+        system_prompt = data.get('systemPrompt', '')
+        system_prompt = str(system_prompt).strip() if system_prompt is not None else ''
+        if len(system_prompt) > 4000:
+            system_prompt = system_prompt[:4000]
         if not isinstance(conversation_history, list):
             return jsonify({'error': 'conversationHistory must be an array'}), 400
 
@@ -210,6 +214,10 @@ def get_recommendation():
         is_follow_up = has_previous and is_follow_up_request(user_input)
 
         logger.info(f"[File Search] Starting recommendation for: {user_input}")
+
+        system_instruction = RECOMMENDATION_PROMPT
+        if system_prompt:
+            system_instruction = f"{RECOMMENDATION_PROMPT}\n\n{system_prompt}"
 
         # Build the prompt with context
         if is_follow_up:
@@ -268,7 +276,7 @@ def get_recommendation():
                     model=RECOMMENDATION_MODEL,
                     contents=context_prompt,
                     config=types.GenerateContentConfig(
-                        system_instruction=RECOMMENDATION_PROMPT,
+                        system_instruction=system_instruction,
                         tools=[file_search_tool],
                         temperature=1.0,  # Gemini 3 is optimized for 1.0
                         thinking_config=types.ThinkingConfig(

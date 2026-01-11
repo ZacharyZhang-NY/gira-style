@@ -1,7 +1,6 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
@@ -23,18 +22,10 @@ type ChatMessage = {
 
 type ChatPanelProps = {
   isBusy: boolean;
-  versionLabel: string;
-  disablePrev: boolean;
-  disableNext: boolean;
   disableComposer: boolean;
-  disableFeedback: boolean;
   disableVideoToggle: boolean;
   videoEnabled: boolean;
-  feedback: "" | "up" | "down";
   messages: ChatMessage[];
-  onPrevVersion: () => void;
-  onNextVersion: () => void;
-  onFeedback: (value: "up" | "down") => void;
   onSubmitRequest: (value: string) => void;
   onToggleVideo: (value: boolean) => void;
 };
@@ -71,18 +62,10 @@ function ChatBubble({ msg }: { msg: ChatMessage }) {
 
 export function ChatPanel({
   isBusy,
-  versionLabel,
-  disablePrev,
-  disableNext,
   disableComposer,
-  disableFeedback,
   disableVideoToggle,
   videoEnabled,
-  feedback,
   messages,
-  onPrevVersion,
-  onNextVersion,
-  onFeedback,
   onSubmitRequest,
   onToggleVideo,
 }: ChatPanelProps) {
@@ -110,83 +93,6 @@ export function ChatPanel({
 
   return (
     <Surface className="flex h-[min(720px,calc(100vh-140px))] min-h-[520px] flex-col overflow-hidden">
-      <div className="px-6 py-6">
-        <Surface tone="subtle" className="flex items-center gap-3 p-3">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Previous version"
-              onClick={onPrevVersion}
-              disabled={disablePrev}
-              className={cn(
-                "grid h-10 w-10 place-items-center rounded-full text-text",
-                "ui-glass-subtle",
-                "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-                "disabled:cursor-not-allowed disabled:opacity-50",
-              )}
-            >
-              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-            </button>
-            <div className="min-w-24 text-center text-sm font-semibold text-text">
-              <span className="inline-flex rounded-full bg-glass-highlight/20 px-3 py-2">{versionLabel}</span>
-            </div>
-            <button
-              type="button"
-              aria-label="Next version"
-              onClick={onNextVersion}
-              disabled={disableNext}
-              className={cn(
-                "grid h-10 w-10 place-items-center rounded-full text-text",
-                "ui-glass-subtle",
-                "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-                "disabled:cursor-not-allowed disabled:opacity-50",
-              )}
-            >
-              <ChevronRight className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </div>
-
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Keep this look"
-              aria-pressed={feedback === "up"}
-              onClick={() => onFeedback("up")}
-              disabled={disableFeedback}
-              className={cn(
-                "relative grid h-10 w-10 place-items-center rounded-full text-text",
-                "ui-glass-subtle",
-                "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-                "disabled:cursor-not-allowed disabled:opacity-50",
-                feedback === "up" && "bg-glass-highlight/30 shadow-lux-md",
-              )}
-            >
-              <ThumbsUp className="h-4 w-4" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label="Refine this look"
-              aria-pressed={feedback === "down"}
-              onClick={() => onFeedback("down")}
-              disabled={disableFeedback}
-              className={cn(
-                "relative grid h-10 w-10 place-items-center rounded-full text-text",
-                "ui-glass-subtle",
-                "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-                "disabled:cursor-not-allowed disabled:opacity-50",
-                feedback === "down" && "bg-glass-highlight/30 shadow-lux-md",
-              )}
-            >
-              <ThumbsDown className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </div>
-        </Surface>
-      </div>
-
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
         <AnimatePresence initial={false}>
           <div className="flex flex-col gap-3">

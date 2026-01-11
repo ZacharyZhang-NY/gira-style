@@ -2,11 +2,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
+import { Star, ThumbsDown, ThumbsUp } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface";
 import type { ColdStartAnswers } from "@/features/cold-start/questions";
 import { ThemeToggle } from "@/features/theme/theme-toggle";
+import { cn } from "@/lib/cn";
 import { readLocalStorageJson, removeLocalStorageItem, writeLocalStorageJson } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
@@ -19,11 +21,6 @@ import type { RecommendationPayload, StudioState, StudioVersion } from "./types"
 
 type StoredColdStart = {
   answers: ColdStartAnswers;
-  updatedAt: string;
-};
-
-type StoredIntentDraft = {
-  text: string;
   updatedAt: string;
 };
 
@@ -54,16 +51,41 @@ function getOutfitItems(payload: RecommendationPayload) {
   return [];
 }
 
-function buildRequestText(requestText: string, answers: ColdStartAnswers | null) {
-  if (!answers) return requestText;
+function normalizeMultiSelect(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
+function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
+  if (!raw || typeof raw !== "object") return { q1: "", q2: [], q3: [], q4: "" };
+  const candidate = raw as Partial<ColdStartAnswers> & { q2?: unknown; q3?: unknown };
+  return {
+    q1: typeof candidate.q1 === "string" ? candidate.q1 : "",
+    q2: normalizeMultiSelect(candidate.q2),
+    q3: normalizeMultiSelect(candidate.q3),
+    q4: typeof candidate.q4 === "string" ? candidate.q4 : "",
+  };
+}
+
+function buildSystemPrompt(answers: ColdStartAnswers | null) {
+  if (!answers) return "";
   const parts = [
-    answers.q1 ? `Vibe: ${answers.q1}.` : "",
-    answers.q2 ? `Occasion focus: ${answers.q2}.` : "",
-    answers.q3 ? `Priority: ${answers.q3}.` : "",
+    answers.q1.trim() ? `Vibe: ${answers.q1.trim()}.` : "",
+    answers.q2.length ? `Occasion focus: ${answers.q2.join(", ")}.` : "",
+    answers.q3.length ? `Priorities: ${answers.q3.join(", ")}.` : "",
+    answers.q4.trim() ? `Self-described style: ${answers.q4.trim()}.` : "",
   ].filter(Boolean);
 
-  if (!parts.length) return requestText;
-  return `${requestText}\n\nStyle context: ${parts.join(" ")}`;
+  if (!parts.length) return "";
+  return [
+    "User style preferences (from onboarding):",
+    ...parts.map((part) => `- ${part}`),
+    "",
+    "Use these preferences as defaults when selecting items and writing styling tips.",
+  ].join("\n");
 }
 
 function formatError(error: unknown, fallback: string) {
@@ -93,8 +115,6 @@ export function Studio() {
   const [state, setState] = React.useState<StudioState>(EMPTY_STUDIO_STATE);
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [videoEnabled, setVideoEnabled] = React.useState(true);
-  const autoRequestRef = React.useRef<string | null>(null);
-  const hasAutoRunRef = React.useRef(false);
   const runTokenRef = React.useRef(0);
   const abortRef = React.useRef<AbortController | null>(null);
 
@@ -105,10 +125,7 @@ export function Studio() {
 
   React.useEffect(() => {
     const storedColdStart = readLocalStorageJson<StoredColdStart>(STORAGE_KEYS.coldStart);
-    setColdStart(storedColdStart?.answers || null);
-
-    const storedDraft = readLocalStorageJson<StoredIntentDraft>(STORAGE_KEYS.intentDraft);
-    if (storedDraft?.text) autoRequestRef.current = storedDraft.text;
+    setColdStart(storedColdStart?.answers ? normalizeColdStartAnswers(storedColdStart.answers) : null);
 
     const storedStudio = readLocalStorageJson<StudioState>(STORAGE_KEYS.studioVersions);
     if (storedStudio) setState(normalizeStudioState(storedStudio));
@@ -162,7 +179,6 @@ export function Studio() {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      removeLocalStorageItem(STORAGE_KEYS.intentDraft);
       setIsGenerating(true);
 
       const previous = versionsRef.current;
@@ -191,15 +207,16 @@ export function Studio() {
         )
         .map((v) => ({ user: v.request, assistant: v.recommendation }));
 
-      const requestWithContext = buildRequestText(trimmed, coldStart);
+      const systemPrompt = buildSystemPrompt(coldStart);
 
       let stage: "a" | "b" | "c" = "a";
       const isStale = () => runTokenRef.current !== runToken;
 
       try {
         const recommendation = await fetchRecommendation({
-          requestText: requestWithContext,
+          requestText: trimmed,
           conversationHistory: history,
+          systemPrompt,
         }, { signal: controller.signal });
 
         if (isStale()) return;
@@ -261,24 +278,8 @@ export function Studio() {
     [coldStart, setStageError, videoEnabled],
   );
 
-  React.useEffect(() => {
-    if (!hydrated) return;
-    if (hasAutoRunRef.current) return;
-    if (isGenerating || state.versions.length) return;
-    const initial = autoRequestRef.current?.trim();
-    if (!initial) return;
-
-    hasAutoRunRef.current = true;
-    void runSequence(initial);
-  }, [hydrated, isGenerating, runSequence, state.versions.length]);
-
   const versions = state.versions;
-  const selectedIndex = versions.length ? clamp(state.selectedIndex, 0, versions.length - 1) : 0;
-  const active = versions[selectedIndex] || null;
-
-  const versionLabel = versions.length ? `${selectedIndex + 1} / ${versions.length}` : "— / —";
-  const disablePrev = isGenerating || selectedIndex <= 0;
-  const disableNext = isGenerating || selectedIndex >= versions.length - 1;
+  const latestVersionId = versions.length ? versions[versions.length - 1]?.id : null;
 
   function startOver() {
     runTokenRef.current += 1;
@@ -287,13 +288,10 @@ export function Studio() {
 
     removeLocalStorageItem(STORAGE_KEYS.coldStart);
     removeLocalStorageItem(STORAGE_KEYS.studioVersions);
-    removeLocalStorageItem(STORAGE_KEYS.intentDraft);
 
     setColdStart(null);
     setState(EMPTY_STUDIO_STATE);
     setIsGenerating(false);
-    autoRequestRef.current = null;
-    hasAutoRunRef.current = false;
 
     router.push("/start");
   }
@@ -305,15 +303,8 @@ export function Studio() {
     }));
   }
 
-  function selectVersion(nextIndex: number) {
-    if (!versions.length) return;
-    if (isGenerating) return;
-    setState((prev) => ({ ...prev, selectedIndex: clamp(nextIndex, 0, prev.versions.length - 1) }));
-  }
-
-  function recordFeedback(value: "up" | "down") {
-    if (!active) return;
-    updateVersion(active.id, (v) => ({ ...v, feedback: value }));
+  function recordFeedback(id: string, value: "up" | "down") {
+    updateVersion(id, (v) => ({ ...v, feedback: value }));
   }
 
   const messages = React.useMemo(() => {
@@ -327,16 +318,19 @@ export function Studio() {
       },
     ];
 
-    const versionMessages = versions.flatMap((v, idx) => {
-      const isSelected = idx === selectedIndex;
+    const versionMessages = versions.flatMap((v) => {
+      const isSelected = latestVersionId ? v.id === latestVersionId : false;
       const formattedResponse = v.recommendation?.formatted_response?.trim();
       const description = v.recommendation?.description?.trim();
-      const baseText = formattedResponse
+      const reason = v.recommendation?.reason?.trim();
+      const preferenceText = formattedResponse
         ? formattedResponse
-        : description
-          ? `Here’s the direction:\n${description}\n\nWant it sharper, softer, darker, or more relaxed? Tell me.`
-          : v.stages.a === "loading"
-            ? "Give me a moment—I’m pulling pieces that match your vibe."
+        : [description, reason].filter(Boolean).join("\n\n");
+      const baseText =
+        v.stages.a === "loading"
+          ? "Give me a moment—I’m pulling pieces that match your vibe."
+          : preferenceText
+            ? `${preferenceText}\n\nWant it sharper, softer, darker, or more relaxed? Tell me.`
             : "I’m ready when you are.";
 
       const errorNotes = [
@@ -366,9 +360,7 @@ export function Studio() {
     });
 
     return [...base, ...versionMessages];
-  }, [isGenerating, selectedIndex, versions]);
-
-  const shopItems = active?.recommendation ? getPrimaryShopItems(active.recommendation, 4) : [];
+  }, [isGenerating, latestVersionId, versions]);
 
   return (
     <div className="min-h-screen">
@@ -395,95 +387,133 @@ export function Studio() {
       <main className="mx-auto max-w-7xl px-6 pb-16 pt-10">
         <div className="grid grid-cols-12 items-start gap-10">
           <div className="col-span-12 lg:col-span-8">
-            <div className="space-y-8">
-              <Surface className="p-8 sm:p-10">
-                {!active ? null : active.stages.a === "loading" ? (
-                  <div className="space-y-4">
-                    <div className="h-3 w-11/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-                    <div className="h-3 w-10/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-                    <div className="h-3 w-9/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-                    <div className="grid grid-cols-2 gap-6 pt-4">
-                      <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
-                      <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
-                    </div>
-                  </div>
-                ) : active.recommendation ? (
-                  <div className="space-y-10">
-                    <div className="grid gap-8 lg:grid-cols-2">
-                      <p className="text-sm leading-relaxed text-text">
-                        {active.recommendation.description || "A complete look, tailored to your intent."}
-                      </p>
-                      <p className="text-sm leading-relaxed text-muted">
-                        {active.recommendation.reason || "Balanced proportions, deliberate texture, and an easy finish."}
-                      </p>
-                    </div>
+            <div className="space-y-10">
+              {!versions.length ? (
+                <Surface className="p-8 sm:p-10">
+                  <p className="text-sm leading-relaxed text-muted">
+                    Ask for a look in the chat, and your versions will appear here.
+                  </p>
+                </Surface>
+              ) : (
+                versions.map((version) => {
+                  const shopItems = version.recommendation ? getPrimaryShopItems(version.recommendation, 4) : [];
+                  const hasImage = Boolean(version.generatedImage);
 
-                    {shopItems.length ? <ProductGrid items={shopItems} /> : null}
-
-                    {active.recommendation.other_recommendation ? (
-                      <p className="text-sm leading-relaxed text-muted">{active.recommendation.other_recommendation}</p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </Surface>
-
-              <div className="space-y-8">
-                <div className="mx-auto w-full max-w-6xl">
-                  <div className="grid gap-6 lg:grid-cols-2">
-                    <Surface className="overflow-hidden p-0">
-                      <div className="relative aspect-[9/16] w-full">
-                        {!active ? (
-                          <div className="absolute inset-0" />
-                        ) : active.stages.b === "loading" ? (
-                          <MediaPlaceholder variant="loading" />
-                        ) : active.generatedImage ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={active.generatedImage}
-                            alt="Outfit preview"
-                            className="absolute inset-0 h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="absolute inset-0" />
-                        )}
-
-                        <div className="absolute left-4 top-4 flex items-center gap-3">
-                          <div className="rounded-full bg-glass-highlight/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-text">
-                            Outfit preview
+                  return (
+                    <div key={version.id} className="space-y-8">
+                      <Surface className="p-8 sm:p-10">
+                        {version.stages.a === "loading" ? (
+                          <div className="space-y-4">
+                            <div className="h-3 w-11/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+                            <div className="h-3 w-10/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+                            <div className="h-3 w-9/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+                            <div className="grid grid-cols-2 gap-6 pt-4">
+                              <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
+                              <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
+                            </div>
                           </div>
+                        ) : version.recommendation ? (
+                          <div className="space-y-10">
+                            {shopItems.length ? <ProductGrid items={shopItems} /> : null}
+
+                            {version.recommendation.other_recommendation ? (
+                              <div className="flex items-start gap-2 text-sm leading-relaxed text-muted">
+                                <Star className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+                                <p className="min-w-0">{version.recommendation.other_recommendation}</p>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="text-sm leading-relaxed text-muted">
+                            {version.stageErrors?.a || "No recommendation available yet."}
+                          </p>
+                        )}
+                      </Surface>
+
+                      <div className="mx-auto w-full max-w-6xl">
+                        <div className="grid gap-6 lg:grid-cols-2">
+                          <Surface className="overflow-hidden p-0">
+                            <div className="relative aspect-[9/16] w-full">
+                              {version.stages.b === "loading" ? (
+                                <MediaPlaceholder variant="loading" />
+                              ) : hasImage ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={version.generatedImage}
+                                  alt="Outfit preview"
+                                  className="absolute inset-0 h-full w-full object-cover"
+                                />
+                              ) : (
+                                <MediaPlaceholder variant="mock" />
+                              )}
+
+                              <div className="absolute left-4 top-4 flex items-center gap-3">
+                                <div className="rounded-full bg-glass-highlight/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-text">
+                                  Outfit preview
+                                </div>
+                              </div>
+
+                              {hasImage ? (
+                                <div className="absolute bottom-4 right-4 flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    aria-label="Keep this look"
+                                    aria-pressed={version.feedback === "up"}
+                                    onClick={() => recordFeedback(version.id, "up")}
+                                    className={cn(
+                                      "relative grid h-10 w-10 place-items-center rounded-full text-text",
+                                      "ui-glass-subtle",
+                                      "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                      "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
+                                      version.feedback === "up" && "bg-glass-highlight/30 shadow-lux-md",
+                                    )}
+                                  >
+                                    <ThumbsUp className="h-4 w-4" aria-hidden="true" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    aria-label="Refine this look"
+                                    aria-pressed={version.feedback === "down"}
+                                    onClick={() => recordFeedback(version.id, "down")}
+                                    className={cn(
+                                      "relative grid h-10 w-10 place-items-center rounded-full text-text",
+                                      "ui-glass-subtle",
+                                      "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                      "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
+                                      version.feedback === "down" && "bg-glass-highlight/30 shadow-lux-md",
+                                    )}
+                                  >
+                                    <ThumbsDown className="h-4 w-4" aria-hidden="true" />
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </Surface>
+
+                          <Surface className="overflow-hidden p-0">
+                            <MotionPreview
+                              state={version.stages.c ?? "pending"}
+                              image={version.generatedImage}
+                              video={version.generatedVideo}
+                              videoEnabled={videoEnabled}
+                            />
+                          </Surface>
                         </div>
                       </div>
-                    </Surface>
-
-                    <Surface className="overflow-hidden p-0">
-                      <MotionPreview
-                        state={active?.stages.c ?? "pending"}
-                        image={active?.generatedImage}
-                        video={active?.generatedVideo}
-                        videoEnabled={videoEnabled}
-                      />
-                    </Surface>
-                  </div>
-                </div>
-              </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
           <div className="col-span-12 lg:col-span-4 lg:sticky lg:top-28">
             <ChatPanel
               isBusy={isGenerating}
-              versionLabel={versionLabel}
-              disablePrev={disablePrev}
-              disableNext={disableNext}
               disableComposer={isGenerating || !hydrated}
-              disableFeedback={!active}
               disableVideoToggle={isGenerating || !hydrated}
               videoEnabled={videoEnabled}
-              feedback={active?.feedback || ""}
               messages={messages}
-              onPrevVersion={() => selectVersion(selectedIndex - 1)}
-              onNextVersion={() => selectVersion(selectedIndex + 1)}
-              onFeedback={recordFeedback}
               onSubmitRequest={runSequence}
               onToggleVideo={(value) => setVideoEnabled(value)}
             />
