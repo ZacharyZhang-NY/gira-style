@@ -24,6 +24,7 @@ type RequestOptions = {
 };
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const DEFAULT_REMOTE_BACKEND_BASE_URL = "https://aritzia.girastyleai.com";
 
 function stripTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
@@ -35,12 +36,10 @@ function getBackendBaseUrl() {
 
   if (typeof window === "undefined") return "";
 
-  const { hostname, port } = window.location;
+  const { hostname } = window.location;
 
   if (hostname === "localhost" || hostname === "127.0.0.1") {
-    if (port && port !== "5001") {
-      return `http://${hostname}:5001`;
-    }
+    return DEFAULT_REMOTE_BACKEND_BASE_URL;
   }
 
   if (hostname === "aura-style-agent.vercel.app" || hostname.endsWith(".vercel.app")) {

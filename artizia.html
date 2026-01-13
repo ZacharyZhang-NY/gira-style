@@ -139,7 +139,8 @@
         let GENERATE_IMAGE_API_URL = '/api/generate-image';
         let GENERATE_VIDEO_API_URL = '/api/generate-video';
         let ENABLE_VIDEO_PREVIEW = true;
-        const VIDEO_TOGGLE_STORAGE_KEY = 'aritziaVideoPreviewEnabled';
+        const REMOTE_API_BASE_URL = 'https://aritzia.girastyleai.com';
+        const VIDEO_TOGGLE_STORAGE_KEY = 'aritziaVideoPreviewEnabled';    
 
         function determineBackendUrl(endpoint) {
             const loc = window.location;
@@ -151,9 +152,7 @@
             
             // Development: localhost
             if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') {
-                if (loc.port && loc.port !== '5001') {
-                    return `http://${loc.hostname}:5001${endpoint}`;
-                }
+                return `${REMOTE_API_BASE_URL}${endpoint}`;      
             }
             
             // Development: GitHub Codespaces
