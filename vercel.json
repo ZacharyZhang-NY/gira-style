@@ -1,31 +1,11 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "artizia.html",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/recommend",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/api/generate-image",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/health",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/artizia.html"
-    }
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "rewrites": [
+    { "source": "/api/recommend", "destination": "/api/index.py" },
+    { "source": "/api/generate-image", "destination": "/api/index.py" },
+    { "source": "/health", "destination": "/api/index.py" }
   ]
 }
