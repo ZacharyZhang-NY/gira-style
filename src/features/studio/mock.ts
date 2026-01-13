@@ -15,42 +15,56 @@ export function mockRecommendation(args: {
   answers: Partial<ColdStartAnswers> | null;
   versionNumber: number;
 }): RecommendationPayload {
-  const vibe = args.answers?.q1 || "";
-  const priority = normalizeMultiSelect(args.answers?.q3)[0] || "";
+  const vibeSelections = normalizeMultiSelect(args.answers?.q1);
+  const palette = typeof args.answers?.q2 === "string" ? args.answers.q2 : "";
+  const priority = typeof args.answers?.q3 === "string" ? args.answers.q3 : "";
+  const focus = typeof args.answers?.q4 === "string" ? args.answers.q4 : "";
 
   const tone =
-    vibe === "Experimental Edge"
-      ? "structured with contrast"
-      : vibe === "Soft Romantic"
+    vibeSelections.includes("Effortless & Minimalist")
+      ? "clean and tailored"
+      : vibeSelections.includes("Romantic & Whimsical")
         ? "soft with polish"
-        : vibe === "Vintage Preppy"
-          ? "classic with crisp details"
-          : "clean and tailored";
+        : vibeSelections.includes("Sporty & Street-Forward")
+          ? "sporty with ease"
+          : vibeSelections.includes("Bold & Trend-Driven")
+            ? "bold with contrast"
+            : "polished and modern";
 
   const comfortNote =
-    priority === "Comfort first"
-      ? "Breathable layers, easy movement."
-      : priority === "Crisp silhouette"
-        ? "Crisp lines, clean proportions."
-        : priority === "Layering & texture"
-          ? "Texture-forward, softly layered."
-          : priority === "Easy to mix & match"
-            ? "High re-wear, effortless pairing."
-            : "Balanced, wearable, polished.";
+    priority === "Quality & Longevity"
+      ? "Investment fabrics with longevity in mind."
+      : priority === "Fit & Comfort"
+        ? "Easy movement and forgiving fits."
+        : priority === "Trend & Novelty"
+          ? "Season-right pieces with a little hype."
+          : "Balanced, wearable, polished.";
 
   const description =
     args.requestText.trim() ||
     "A refined look that feels like you—polished, modern, and easy to wear.";
 
   const baseSku = 128000 + args.versionNumber * 11;
+  const baseColor =
+    palette === "Warm & Earthy"
+      ? "Warm Sand"
+      : palette === "Vibrant & Playful"
+        ? "Poppy"
+        : "Deep Charcoal";
+  const bottomItem =
+    focus === "Legs"
+      ? "Split-Hem Legging"
+      : focus === "Comfort & Coverage"
+        ? "Wide-Leg Pant"
+        : "High-Waist Trouser";
 
   return {
     description,
     outfit: [
       {
-        item_name: vibe === "Experimental Edge" ? "Cropped Leather Jacket" : "Tailored Blazer",
+        item_name: vibeSelections.includes("Bold & Trend-Driven") ? "Cropped Leather Jacket" : "Tailored Blazer",
         sku: String(baseSku + 1),
-        color: "Deep Charcoal",
+        color: baseColor,
         link: "#",
         reason: `Frames the silhouette—${tone}.`,
         image: "",
@@ -58,21 +72,21 @@ export function mockRecommendation(args: {
       {
         item_name: "Contour Tank",
         sku: String(baseSku + 2),
-        color: "Ivory",
+        color: palette === "Warm & Earthy" ? "Cream" : "Ivory",
         link: "#",
         reason: "A clean base layer that makes everything look intentional.",
         image: "",
       },
       {
-        item_name: vibe === "Soft Romantic" ? "Bias Midi Skirt" : "Straight-Leg Trouser",
+        item_name: focus === "Waist & Silhouette" ? "Belted Midi Skirt" : bottomItem,
         sku: String(baseSku + 3),
-        color: vibe === "Vintage Preppy" ? "Espresso" : "Black",
+        color: palette === "Warm & Earthy" ? "Espresso" : "Black",
         link: "#",
-        reason: "Anchors the outfit while keeping proportions modern.",
+        reason: focus ? `Leans into your focus on ${focus.toLowerCase()}.` : "Anchors the outfit while keeping proportions modern.",
         image: "",
       },
       {
-        item_name: vibe === "Vintage Preppy" ? "Leather Loafer" : "Sleek Ankle Boot",
+        item_name: vibeSelections.includes("Sporty & Street-Forward") ? "Tech Sneaker" : "Sleek Ankle Boot",
         sku: String(baseSku + 4),
         color: "Oxblood",
         link: "#",

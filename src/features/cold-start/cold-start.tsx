@@ -13,15 +13,18 @@ import { luxTween } from "@/lib/motion";
 import { readLocalStorageJson, writeLocalStorageJson } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 import { ThemeToggle } from "@/features/theme/theme-toggle";
+import { createSession } from "@/features/studio/api";
 import {
   COLD_START_QUESTIONS,
   EMPTY_COLD_START_ANSWERS,
+  isColdStartQ4Option,
   type ColdStartAnswers,
 } from "./questions";
 
 type StoredColdStart = {
   answers: ColdStartAnswers;
   updatedAt: string;
+  sessionId?: string;
 };
 
 function normalizeMultiSelect(value: unknown) {
@@ -32,15 +35,40 @@ function normalizeMultiSelect(value: unknown) {
   return [];
 }
 
+function normalizeSingleSelect(value: unknown) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    const first = value.find((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return first?.trim() ?? "";
+  }
+  return "";
+}
+
 function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
   if (!raw || typeof raw !== "object") return EMPTY_COLD_START_ANSWERS;
-  const candidate = raw as Partial<ColdStartAnswers> & { q2?: unknown; q3?: unknown };
-  return {
-    q1: typeof candidate.q1 === "string" ? candidate.q1 : "",
-    q2: normalizeMultiSelect(candidate.q2),
-    q3: normalizeMultiSelect(candidate.q3),
-    q4: typeof candidate.q4 === "string" ? candidate.q4 : "",
+  const candidate = raw as Partial<ColdStartAnswers> & {
+    q1?: unknown;
+    q2?: unknown;
+    q3?: unknown;
+    q4?: unknown;
+    styleNote?: unknown;
   };
+  const q4Candidate = normalizeSingleSelect(candidate.q4);
+  const styleNoteCandidate = typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
+  return {
+    q1: normalizeMultiSelect(candidate.q1),
+    q2: normalizeSingleSelect(candidate.q2),
+    q3: normalizeSingleSelect(candidate.q3),
+    q4: isColdStartQ4Option(q4Candidate) ? q4Candidate : "",
+    styleNote: styleNoteCandidate || (!isColdStartQ4Option(q4Candidate) ? q4Candidate : ""),
+  };
+}
+
+function createLocalSessionId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 export function ColdStart() {
@@ -52,12 +80,15 @@ export function ColdStart() {
   const [stepIndex, setStepIndex] = React.useState(0);
   const [styleText, setStyleText] = React.useState("");
   const [error, setError] = React.useState("");
+  const [isSaving, setIsSaving] = React.useState(false);
 
   React.useEffect(() => {
     const stored = readLocalStorageJson<StoredColdStart>(STORAGE_KEYS.coldStart);
     if (!stored?.answers) return;
     const normalized = normalizeColdStartAnswers(stored.answers);
-    const hasRequired = Boolean(normalized.q1.trim() && normalized.q2.length && normalized.q3.length);
+    const hasRequired = Boolean(
+      normalized.q1.length && normalized.q2.trim() && normalized.q3.trim() && normalized.q4.trim(),
+    );
     if (!hasRequired) return;
     router.replace("/studio");
   }, [router]);
@@ -77,7 +108,7 @@ export function ColdStart() {
 
   function setAnswer(nextValue: string) {
     setError("");
-    if (!question) return;
+    if (!question || question.multi) return;
     setAnswers((prev) => ({ ...prev, [question.id]: nextValue }));
   }
 
@@ -114,20 +145,39 @@ export function ColdStart() {
     setStepIndex((i) => Math.min(total, i + 1));
   }
 
-  function finish() {
+  async function finish() {
+    if (isSaving) return;
     const trimmed = styleText.trim();
 
+    const sessionId = createLocalSessionId();
     const nextAnswers: ColdStartAnswers = {
       ...answers,
-      q4: trimmed,
+      styleNote: trimmed,
     };
     const payload: StoredColdStart = {
       answers: nextAnswers,
       updatedAt: new Date().toISOString(),
+      sessionId,
     };
     writeLocalStorageJson(STORAGE_KEYS.coldStart, payload);
 
-    router.push("/studio");
+    setIsSaving(true);
+    setError("");
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      await createSession({
+        sessionId,
+        preferences: nextAnswers,
+        userAgent: navigator.userAgent,
+        locale: navigator.language,
+        timezone,
+      });
+      router.push("/studio");
+    } catch (err) {
+      setError("We couldn't save your preferences yet. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -247,7 +297,8 @@ export function ColdStart() {
                             <div className="mt-1 flex items-center gap-4">
                               <span
                                 className={cn(
-                                  "h-3.5 w-3.5 rounded-full border transition-colors duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                  "h-3.5 w-3.5 border transition-colors duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                  question?.multi ? "rounded-sm" : "rounded-full",
                                   isSelected
                                     ? "border-gold bg-gold"
                                     : "border-glass-border/45 bg-glass-highlight/15 group-hover:border-glass-border/70",
@@ -271,7 +322,9 @@ export function ColdStart() {
                     </Button>
 
                     {isStyleStep ? (
-                      <Button onClick={finish}>Start chatting</Button>
+                      <Button onClick={finish} isLoading={isSaving}>
+                        Start chatting
+                      </Button>
                     ) : (
                       <Button onClick={goNext}>Next</Button>
                     )}

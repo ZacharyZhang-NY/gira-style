@@ -2,19 +2,24 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
-import { Star, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Star } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface";
-import type { ColdStartAnswers } from "@/features/cold-start/questions";
+import {
+  EMPTY_COLD_START_ANSWERS,
+  isColdStartQ4Option,
+  type ColdStartAnswers,
+} from "@/features/cold-start/questions";
 import { ThemeToggle } from "@/features/theme/theme-toggle";
 import { cn } from "@/lib/cn";
 import { readLocalStorageJson, removeLocalStorageItem, writeLocalStorageJson } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
-import { fetchRecommendation, generateImage, generateVideo } from "./api";
+import { createSession, fetchRecommendation, generateImage, generateVideo, logSessionTurn } from "./api";
 import { MediaPlaceholder } from "./components/media-placeholder";
 import { MotionPreview } from "./components/motion-preview";
+import { OutfitPreview } from "./components/outfit-preview";
 import { ProductGrid } from "./components/product-grid";
 import { ChatPanel } from "./components/chat-panel";
 import type { RecommendationPayload, StudioState, StudioVersion } from "./types";
@@ -22,6 +27,7 @@ import type { RecommendationPayload, StudioState, StudioVersion } from "./types"
 type StoredColdStart = {
   answers: ColdStartAnswers;
   updatedAt: string;
+  sessionId?: string;
 };
 
 const EMPTY_STUDIO_STATE: StudioState = {
@@ -59,33 +65,107 @@ function normalizeMultiSelect(value: unknown) {
   return [];
 }
 
+function normalizeSingleSelect(value: unknown) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    const first = value.find((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return first?.trim() ?? "";
+  }
+  return "";
+}
+
 function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
-  if (!raw || typeof raw !== "object") return { q1: "", q2: [], q3: [], q4: "" };
-  const candidate = raw as Partial<ColdStartAnswers> & { q2?: unknown; q3?: unknown };
-  return {
-    q1: typeof candidate.q1 === "string" ? candidate.q1 : "",
-    q2: normalizeMultiSelect(candidate.q2),
-    q3: normalizeMultiSelect(candidate.q3),
-    q4: typeof candidate.q4 === "string" ? candidate.q4 : "",
+  if (!raw || typeof raw !== "object") return EMPTY_COLD_START_ANSWERS;
+  const candidate = raw as Partial<ColdStartAnswers> & {
+    q1?: unknown;
+    q2?: unknown;
+    q3?: unknown;
+    q4?: unknown;
+    styleNote?: unknown;
   };
+  const q4Candidate = normalizeSingleSelect(candidate.q4);
+  const q4IsOption = isColdStartQ4Option(q4Candidate);
+  const styleNoteCandidate = typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
+  return {
+    q1: normalizeMultiSelect(candidate.q1),
+    q2: normalizeSingleSelect(candidate.q2),
+    q3: normalizeSingleSelect(candidate.q3),
+    q4: q4IsOption ? q4Candidate : "",
+    styleNote: styleNoteCandidate || (!q4IsOption ? q4Candidate : ""),
+  };
+}
+
+function createLocalSessionId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function getPaletteGuidance(palette: string) {
+  switch (palette) {
+    case "The Modern Neutrals":
+      return "Agent mode: Monochromatic Chic. Focus on texture differences rather than color contrast.";
+    case "Warm & Earthy":
+      return 'Agent mode: Tonal Layering. Prioritize the "Wilfred" aesthetic and warm-tone lighting in generated images.';
+    case "Vibrant & Playful":
+      return 'Agent mode: Statement Styling. Prioritize "Seasonal" colors and "Sunday Best" prints.';
+    default:
+      return "";
+  }
+}
+
+function getPriorityGuidance(priority: string) {
+  switch (priority) {
+    case "Quality & Longevity":
+      return "Profile: The Investment Shopper. Emphasize natural fibers (wool, silk, cashmere) and durability.";
+    case "Fit & Comfort":
+      return 'Profile: The Fit-Critical Shopper (high return risk). Filter out rigid fabrics; prioritize "True to Size" reviews and stretch/adjustable features to reduce return rates.';
+    case "Trend & Novelty":
+      return 'Profile: The Impulse Shopper. Highlight scarcity ("Selling fast") and social proof ("As seen on TikTok"). Lower price sensitivity if the item is "hot."';
+    default:
+      return "";
+  }
+}
+
+function getHighlightGuidance(focus: string) {
+  switch (focus) {
+    case "Waist & Silhouette":
+      return "Highlight waist definition with belted coats, high-waisted trousers, and bodysuits.";
+    case "Legs":
+      return "Highlight legs with shorter hemlines, split-hem leggings, or elongated fits.";
+    case "Comfort & Coverage":
+      return "Prioritize relaxed coverage with oversized hoodies, wide-leg pants, and flowy midi dresses.";
+    default:
+      return "";
+  }
 }
 
 function buildSystemPrompt(answers: ColdStartAnswers | null) {
   if (!answers) return "";
   const parts = [
-    answers.q1.trim() ? `Vibe: ${answers.q1.trim()}.` : "",
-    answers.q2.length ? `Occasion focus: ${answers.q2.join(", ")}.` : "",
-    answers.q3.length ? `Priorities: ${answers.q3.join(", ")}.` : "",
-    answers.q4.trim() ? `Self-described style: ${answers.q4.trim()}.` : "",
+    answers.q1.length ? `Style universes: ${answers.q1.join(", ")}.` : "",
+    answers.q2.trim() ? `Color palette: ${answers.q2.trim()}.` : "",
+    answers.q3.trim() ? `Non-negotiable: ${answers.q3.trim()}.` : "",
+    answers.q4.trim() ? `Highlight focus: ${answers.q4.trim()}.` : "",
+    answers.styleNote.trim() ? `Self-described style: ${answers.styleNote.trim()}.` : "",
   ].filter(Boolean);
 
-  if (!parts.length) return "";
-  return [
-    "User style preferences (from onboarding):",
-    ...parts.map((part) => `- ${part}`),
-    "",
-    "Use these preferences as defaults when selecting items and writing styling tips.",
-  ].join("\n");
+  const guidance = [
+    getPaletteGuidance(answers.q2),
+    getPriorityGuidance(answers.q3),
+    getHighlightGuidance(answers.q4),
+  ].filter(Boolean);
+
+  if (!parts.length && !guidance.length) return "";
+
+  const lines = ["User style preferences (from onboarding):", ...parts.map((part) => `- ${part}`)];
+  if (guidance.length) {
+    lines.push("", "Personalization instructions:", ...guidance.map((item) => `- ${item}`));
+  }
+  lines.push("", "Use these preferences as defaults when selecting items and writing styling tips.");
+
+  return lines.join("\n");
 }
 
 function formatError(error: unknown, fallback: string) {
@@ -112,6 +192,8 @@ export function Studio() {
 
   const [hydrated, setHydrated] = React.useState(false);
   const [coldStart, setColdStart] = React.useState<ColdStartAnswers | null>(null);
+  const [sessionId, setSessionId] = React.useState<string | null>(null);
+  const [sessionReady, setSessionReady] = React.useState(false);
   const [state, setState] = React.useState<StudioState>(EMPTY_STUDIO_STATE);
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [videoEnabled, setVideoEnabled] = React.useState(true);
@@ -125,7 +207,41 @@ export function Studio() {
 
   React.useEffect(() => {
     const storedColdStart = readLocalStorageJson<StoredColdStart>(STORAGE_KEYS.coldStart);
-    setColdStart(storedColdStart?.answers ? normalizeColdStartAnswers(storedColdStart.answers) : null);
+    const normalizedAnswers = storedColdStart?.answers ? normalizeColdStartAnswers(storedColdStart.answers) : null;
+    setColdStart(normalizedAnswers);
+    if (storedColdStart?.sessionId) {
+      setSessionId(storedColdStart.sessionId);
+      setSessionReady(true);
+    } else if (normalizedAnswers) {
+      const hasRequired = Boolean(
+        normalizedAnswers.q1.length
+          && normalizedAnswers.q2.trim()
+          && normalizedAnswers.q3.trim()
+          && normalizedAnswers.q4.trim(),
+      );
+      if (hasRequired) {
+        const nextSessionId = createLocalSessionId();
+        writeLocalStorageJson(STORAGE_KEYS.coldStart, {
+          ...(storedColdStart || { answers: normalizedAnswers, updatedAt: new Date().toISOString() }),
+          sessionId: nextSessionId,
+        });
+        setSessionId(nextSessionId);
+        setSessionReady(false);
+        void createSession({
+          sessionId: nextSessionId,
+          preferences: normalizedAnswers,
+          userAgent: navigator.userAgent,
+          locale: navigator.language,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        })
+          .then(() => {
+            setSessionReady(true);
+          })
+          .catch((error) => {
+            console.warn("Session creation failed:", error);
+          });
+      }
+    }
 
     const storedStudio = readLocalStorageJson<StudioState>(STORAGE_KEYS.studioVersions);
     if (storedStudio) setState(normalizeStudioState(storedStudio));
@@ -230,6 +346,19 @@ export function Studio() {
           ),
         }));
 
+        if (sessionReady && sessionId) {
+          void logSessionTurn(sessionId, {
+            turnIndex: versionNumber,
+            userMessage: trimmed,
+            assistantResponse: recommendation,
+            imageData: null,
+            videoData: null,
+            videoUri: null,
+          }).catch((error) => {
+            console.warn("Session logging failed:", error);
+          });
+        }
+
         stage = "b";
         const outfitItems = getOutfitItems(recommendation);
         const imageData = await generateImage(outfitItems, { signal: controller.signal });
@@ -249,6 +378,19 @@ export function Studio() {
           ),
         }));
 
+        if (sessionReady && sessionId) {
+          void logSessionTurn(sessionId, {
+            turnIndex: versionNumber,
+            userMessage: trimmed,
+            assistantResponse: recommendation,
+            imageData,
+            videoData: null,
+            videoUri: null,
+          }).catch((error) => {
+            console.warn("Session logging failed:", error);
+          });
+        }
+
         if (!videoEnabled) return;
 
         stage = "c";
@@ -263,6 +405,19 @@ export function Studio() {
             v.id === id ? { ...v, stages: { ...v.stages, c: "done" }, generatedVideo: videoSource } : v,
           ),
         }));
+
+        if (sessionReady && sessionId) {
+          void logSessionTurn(sessionId, {
+            turnIndex: versionNumber,
+            userMessage: trimmed,
+            assistantResponse: recommendation,
+            imageData: null,
+            videoData: video.videoData ?? null,
+            videoUri: video.videoUri ?? null,
+          }).catch((error) => {
+            console.warn("Session logging failed:", error);
+          });
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -275,7 +430,7 @@ export function Studio() {
         }
       }
     },
-    [coldStart, setStageError, videoEnabled],
+    [coldStart, setStageError, sessionId, sessionReady, videoEnabled],
   );
 
   const versions = state.versions;
@@ -289,6 +444,8 @@ export function Studio() {
     removeLocalStorageItem(STORAGE_KEYS.coldStart);
     removeLocalStorageItem(STORAGE_KEYS.studioVersions);
 
+    setSessionId(null);
+    setSessionReady(false);
     setColdStart(null);
     setState(EMPTY_STUDIO_STATE);
     setIsGenerating(false);
@@ -433,61 +590,12 @@ export function Studio() {
                       <div className="mx-auto w-full max-w-6xl">
                         <div className="grid gap-6 lg:grid-cols-2">
                           <Surface className="overflow-hidden p-0">
-                            <div className="relative aspect-[9/16] w-full">
-                              {version.stages.b === "loading" ? (
-                                <MediaPlaceholder variant="loading" />
-                              ) : hasImage ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={version.generatedImage}
-                                  alt="Outfit preview"
-                                  className="absolute inset-0 h-full w-full object-cover"
-                                />
-                              ) : (
-                                <MediaPlaceholder variant="mock" />
-                              )}
-
-                              <div className="absolute left-4 top-4 flex items-center gap-3">
-                                <div className="rounded-full bg-glass-highlight/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-text">
-                                  Outfit preview
-                                </div>
-                              </div>
-
-                              {hasImage ? (
-                                <div className="absolute bottom-4 right-4 flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    aria-label="Keep this look"
-                                    aria-pressed={version.feedback === "up"}
-                                    onClick={() => recordFeedback(version.id, "up")}
-                                    className={cn(
-                                      "relative grid h-10 w-10 place-items-center rounded-full text-text",
-                                      "ui-glass-subtle",
-                                      "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                                      "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-                                      version.feedback === "up" && "bg-glass-highlight/30 shadow-lux-md",
-                                    )}
-                                  >
-                                    <ThumbsUp className="h-4 w-4" aria-hidden="true" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    aria-label="Refine this look"
-                                    aria-pressed={version.feedback === "down"}
-                                    onClick={() => recordFeedback(version.id, "down")}
-                                    className={cn(
-                                      "relative grid h-10 w-10 place-items-center rounded-full text-text",
-                                      "ui-glass-subtle",
-                                      "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                                      "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-                                      version.feedback === "down" && "bg-glass-highlight/30 shadow-lux-md",
-                                    )}
-                                  >
-                                    <ThumbsDown className="h-4 w-4" aria-hidden="true" />
-                                  </button>
-                                </div>
-                              ) : null}
-                            </div>
+                            <OutfitPreview
+                              state={version.stages.b ?? "pending"}
+                              image={version.generatedImage}
+                              feedback={version.feedback}
+                              onFeedback={(value) => recordFeedback(version.id, value)}
+                            />
                           </Surface>
 
                           <Surface className="overflow-hidden p-0">

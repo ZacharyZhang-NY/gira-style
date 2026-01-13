@@ -2,3 +2,5 @@ Flask
 flask-cors
 google-genai
 python-dotenv
+psycopg2-binary
+boto3

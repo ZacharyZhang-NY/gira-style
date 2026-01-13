@@ -6,19 +6,24 @@ import mimetypes
 import base64
 import time
 import urllib.request
+import uuid
 
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+import boto3
+from botocore.config import Config
+import psycopg2
+from psycopg2.extras import Json
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env.local for local dev
+load_dotenv(os.path.join(ROOT_DIR, ".env.local"))
 
 try:
     from api.env import api_key as GEMINI_API_KEY
@@ -61,9 +66,243 @@ else:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     logger.info(f"Gemini client initialized. File Search Store: {FILE_SEARCH_STORE}")
 
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("NEON_DATABASE_URL")
+R2_BUCKET = os.getenv("R2_BUCKET", "")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT", "")
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "")
+
+_r2_client = None
+
+
+def get_db_connection():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not configured.")
+    return psycopg2.connect(DATABASE_URL)
+
+
+def get_r2_client():
+    global _r2_client
+    if _r2_client:
+        return _r2_client
+    if not (R2_BUCKET and R2_ENDPOINT and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY):
+        raise RuntimeError("R2 storage credentials are not fully configured.")
+    _r2_client = boto3.client(
+        "s3",
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        region_name="auto",
+        config=Config(signature_version="s3v4"),
+    )
+    return _r2_client
+
+
+def build_r2_url(object_key: str):
+    if R2_PUBLIC_BASE_URL:
+        return f"{R2_PUBLIC_BASE_URL.rstrip('/')}/{object_key}"
+    if not R2_ENDPOINT:
+        return ""
+    return f"{R2_ENDPOINT.rstrip('/')}/{R2_BUCKET}/{object_key}"
+
+
+def parse_data_url(data_url: str):
+    if not data_url or not isinstance(data_url, str):
+        return None, None
+    if not data_url.startswith("data:"):
+        return None, None
+    header, encoded = data_url.split(",", 1)
+    mime_type = header.split(":")[1].split(";")[0] if ":" in header else "application/octet-stream"
+    return mime_type, base64.b64decode(encoded)
+
+
+def upload_to_r2(object_key: str, data: bytes, mime_type: str):
+    client = get_r2_client()
+    client.put_object(
+        Bucket=R2_BUCKET,
+        Key=object_key,
+        Body=data,
+        ContentType=mime_type or "application/octet-stream",
+    )
+    return build_r2_url(object_key)
+
+
+def fetch_video_bytes(video_uri: str):
+    if not GEMINI_API_KEY:
+        return None
+    if not video_uri:
+        return None
+    video_url = video_uri
+    if "key=" not in video_url:
+        separator = "&" if "?" in video_url else "?"
+        video_url = f"{video_url}{separator}key={GEMINI_API_KEY}"
+    try:
+        with urllib.request.urlopen(video_url, timeout=60) as response:
+            return response.read()
+    except Exception as e:
+        logger.warning(f"Failed to fetch video bytes: {e}")
+        return None
+
+
+def normalize_session_id(raw_session_id):
+    if not raw_session_id:
+        return None
+    try:
+        return str(uuid.UUID(str(raw_session_id)))
+    except (ValueError, TypeError):
+        return None
+
+
+def build_media_key(session_id: str, turn_index: int, filename: str):
+    return f"sessions/{session_id}/turns/{turn_index}/{filename}"
+
+
+def upsert_session(session_id, preferences, system_prompt, user_agent, locale, timezone):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sessions (
+                    session_id, preferences, system_prompt, user_agent, locale, timezone, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    preferences = EXCLUDED.preferences,
+                    system_prompt = EXCLUDED.system_prompt,
+                    user_agent = EXCLUDED.user_agent,
+                    locale = EXCLUDED.locale,
+                    timezone = EXCLUDED.timezone,
+                    updated_at = now()
+                """,
+                (session_id, Json(preferences), system_prompt, user_agent, locale, timezone),
+            )
+
+
+def upsert_turn(session_id, turn_index, user_message, assistant_response,
+                image_key, image_url, video_key, video_url):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO session_turns (
+                    session_id, turn_index, user_message, assistant_response,
+                    image_key, image_url, video_key, video_url
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (session_id, turn_index) DO UPDATE SET
+                    user_message = EXCLUDED.user_message,
+                    assistant_response = EXCLUDED.assistant_response,
+                    image_key = COALESCE(EXCLUDED.image_key, session_turns.image_key),
+                    image_url = COALESCE(EXCLUDED.image_url, session_turns.image_url),
+                    video_key = COALESCE(EXCLUDED.video_key, session_turns.video_key),
+                    video_url = COALESCE(EXCLUDED.video_url, session_turns.video_url)
+                """,
+                (
+                    session_id,
+                    turn_index,
+                    user_message,
+                    Json(assistant_response),
+                    image_key,
+                    image_url,
+                    video_key,
+                    video_url,
+                ),
+            )
+
 @app.route('/')
 def serve_frontend():
     return send_from_directory(os.getcwd(), 'artizia.html')
+
+
+@app.route('/api/sessions', methods=['POST'])
+def create_session():
+    if not DATABASE_URL:
+        return jsonify({'error': 'Database not configured.'}), 500
+    try:
+        data = request.get_json(silent=True) or {}
+        preferences = data.get('preferences')
+        if not isinstance(preferences, dict):
+            return jsonify({'error': 'preferences must be an object'}), 400
+
+        session_id = normalize_session_id(data.get('sessionId') or data.get('session_id'))
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
+        system_prompt = data.get('systemPrompt') or data.get('system_prompt')
+        user_agent = data.get('userAgent') or data.get('user_agent')
+        locale = data.get('locale')
+        timezone = data.get('timezone')
+
+        upsert_session(session_id, preferences, system_prompt, user_agent, locale, timezone)
+        return jsonify({'success': True, 'sessionId': session_id})
+    except Exception as e:
+        logger.exception("Session creation error")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sessions/<session_id>/turns', methods=['POST'])
+def create_session_turn(session_id):
+    if not DATABASE_URL:
+        return jsonify({'error': 'Database not configured.'}), 500
+    normalized_session_id = normalize_session_id(session_id)
+    if not normalized_session_id:
+        return jsonify({'error': 'Invalid session id.'}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+        turn_index_raw = data.get('turnIndex') if 'turnIndex' in data else data.get('turn_index')
+        try:
+            turn_index = int(turn_index_raw)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'turnIndex must be an integer.'}), 400
+        if turn_index < 1:
+            return jsonify({'error': 'turnIndex must be >= 1.'}), 400
+
+        user_message = str(data.get('userMessage', '')).strip()
+        assistant_response = data.get('assistantResponse')
+        if not user_message:
+            return jsonify({'error': 'userMessage is required.'}), 400
+        if not isinstance(assistant_response, dict):
+            return jsonify({'error': 'assistantResponse must be an object.'}), 400
+
+        image_key = None
+        image_url = None
+        image_data = data.get('imageData')
+        if image_data:
+            image_mime, image_bytes = parse_data_url(image_data)
+            if image_bytes:
+                image_key = build_media_key(normalized_session_id, turn_index, "image.png")
+                image_url = upload_to_r2(image_key, image_bytes, image_mime or "image/png")
+
+        video_key = None
+        video_url = None
+        video_data = data.get('videoData')
+        video_uri = data.get('videoUri')
+        video_mime = None
+        video_bytes = None
+        if video_data:
+            video_mime, video_bytes = parse_data_url(video_data)
+        elif video_uri:
+            video_mime = "video/mp4"
+            video_bytes = fetch_video_bytes(video_uri)
+
+        if video_bytes:
+            video_key = build_media_key(normalized_session_id, turn_index, "video.mp4")
+            video_url = upload_to_r2(video_key, video_bytes, video_mime or "video/mp4")
+
+        upsert_turn(
+            normalized_session_id,
+            turn_index,
+            user_message,
+            assistant_response,
+            image_key,
+            image_url,
+            video_key,
+            video_url,
+        )
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.exception("Session turn logging error")
+        return jsonify({'error': str(e)}), 500
 
 
 def is_follow_up_request(user_input):

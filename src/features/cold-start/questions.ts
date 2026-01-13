@@ -1,10 +1,11 @@
-export type ColdStartQuestionId = "q1" | "q2" | "q3";
+export type ColdStartQuestionId = "q1" | "q2" | "q3" | "q4";
 
 export type ColdStartAnswers = {
-  q1: string;
-  q2: string[];
-  q3: string[];
+  q1: string[];
+  q2: string;
+  q3: string;
   q4: string;
+  styleNote: string;
 };
 
 export type ColdStartQuestion = {
@@ -22,92 +23,118 @@ export type ColdStartQuestion = {
 export const COLD_START_QUESTIONS: ColdStartQuestion[] = [
   {
     id: "q1",
-    title: "First, what kind of vibe feels most like you?",
-    hint: "This helps me learn your taste—so the first look lands closer to home.",
+    title: 'To start curating your studio, which of these style universes feels most like "home" to you?',
+    hint: "Select all that apply.",
+    multi: true,
     options: [
       {
-        value: "Minimalist Chic",
-        title: "Minimalist Chic",
-        description: "Clean lines, quiet confidence, and sharp proportions.",
+        value: "Effortless & Minimalist",
+        title: "Effortless & Minimalist",
+        description: "Tailored, neutral, structured, architectural.",
       },
       {
-        value: "Soft Romantic",
-        title: "Soft Romantic",
-        description: "Gentle shapes, polished softness, and a touch of ease.",
+        value: "Romantic & Whimsical",
+        title: "Romantic & Whimsical",
+        description: "Vintage-inspired, soft drapes, floral, feminine.",
       },
       {
-        value: "Experimental Edge",
-        title: "Experimental Edge",
-        description: "Contrast, structure, and a little “don’t play it safe.”",
+        value: "Sporty & Street-Forward",
+        title: "Sporty & Street-Forward",
+        description: "Athleisure, fleece, oversized, technical.",
       },
       {
-        value: "Vintage Preppy",
-        title: "Vintage Preppy",
-        description: "Classic codes, crisp details, and texture that reads premium.",
+        value: "Bold & Trend-Driven",
+        title: "Bold & Trend-Driven",
+        description: "Playful cuts, crop tops, high-fashion experiments.",
       },
     ],
   },
   {
     id: "q2",
-    title: "Where do you need outfits the most?",
-    hint: "We’ll optimize for the moments you repeat—not the one-off fantasy. (Select all that apply.)",
-    multi: true,
+    title: "If we opened your closet right now, which color palette would dominate?",
+    hint: "Pick the palette that shows up most often in your wardrobe.",
     options: [
       {
-        value: "Everyday",
-        title: "Everyday, but elevated",
-        description: "Comfortable, effortless, and still looks intentional.",
+        value: "The Modern Neutrals",
+        title: "The Modern Neutrals",
+        description:
+          "Black, White, Grey, and Navy. Agent mode: Monochromatic Chic. Focus on texture differences rather than color contrast.",
       },
       {
-        value: "Work-ready",
-        title: "Work-ready",
-        description: "Put-together, modern, and never boring.",
+        value: "Warm & Earthy",
+        title: "Warm & Earthy",
+        description:
+          'Creams, Browns, Rusts, and Olives. Agent mode: Tonal Layering. Prioritize the "Wilfred" aesthetic and warm-tone lighting in generated images.',
       },
       {
-        value: "Date night",
-        title: "Date night",
-        description: "Flattering, confident, and not trying too hard.",
-      },
-      {
-        value: "Event / Dress Code",
-        title: "Event / Dress code",
-        description: "Respect the rules—then add your signature.",
+        value: "Vibrant & Playful",
+        title: "Vibrant & Playful",
+        description:
+          'Bright pops of color, pastels, or prints. Agent mode: Statement Styling. Prioritize "Seasonal" colors and "Sunday Best" prints.',
       },
     ],
   },
   {
     id: "q3",
-    title: "Last one: what matters most when you get dressed?",
-    hint: "This sets your default trade-offs (comfort vs. silhouette vs. texture). (Select all that apply.)",
-    multi: true,
+    title: "When adding a new piece to your closet, what is the absolute non-negotiable?",
+    hint: "Choose the priority that never changes for you.",
     options: [
       {
-        value: "Comfort first",
-        title: "Comfort first",
-        description: "Soft, breathable, and wearable for hours.",
+        value: "Quality & Longevity",
+        title: "Quality & Longevity",
+        description:
+          "Profile: The Investment Shopper. Strategy: Recommend higher price-point natural fibers (wool, silk, cashmere). Highlight durability.",
       },
       {
-        value: "Crisp silhouette",
-        title: "Crisp silhouette",
-        description: "Clean shape, sharper lines, and an “awake” look.",
+        value: "Fit & Comfort",
+        title: "Fit & Comfort",
+        description:
+          'Profile: The Fit-Critical Shopper (High Return Risk). Strategy: Filter out rigid fabrics. Prioritize items with "True to Size" reviews and stretch/adjustable features to reduce return rates.',
       },
       {
-        value: "Layering & texture",
-        title: "Layering & texture",
-        description: "Depth, fabric contrast, and styling nuance.",
+        value: "Trend & Novelty",
+        title: "Trend & Novelty",
+        description:
+          'Profile: The Impulse Shopper. Strategy: Highlight scarcity ("Selling fast") and social proof ("As seen on TikTok"). Lower price sensitivity if the item is "hot."',
+      },
+    ],
+  },
+  {
+    id: "q4",
+    title: "When styling an outfit, which feature do you love to highlight most?",
+    hint: "Pick the detail you want the outfit to emphasize.",
+    options: [
+      {
+        value: "Waist & Silhouette",
+        title: "Waist & Silhouette",
+        description: "Recs: Belted coats, high-waisted trousers, bodysuits.",
       },
       {
-        value: "Easy to mix & match",
-        title: "Easy to mix & match",
-        description: "High re-wear, easy pairings, and reliable formulas.",
+        value: "Legs",
+        title: "Legs",
+        description: "Recs: Mini skirts, split-hem leggings, shorts.",
+      },
+      {
+        value: "Comfort & Coverage",
+        title: "Comfort & Coverage",
+        description: "Recs: Oversized hoodies, wide-leg pants, flowy midi dresses.",
       },
     ],
   },
 ];
 
 export const EMPTY_COLD_START_ANSWERS: ColdStartAnswers = {
-  q1: "",
-  q2: [],
-  q3: [],
+  q1: [],
+  q2: "",
+  q3: "",
   q4: "",
+  styleNote: "",
 };
+
+export const COLD_START_Q4_OPTION_VALUES = new Set(
+  COLD_START_QUESTIONS.find((question) => question.id === "q4")?.options.map((option) => option.value) ?? [],
+);
+
+export function isColdStartQ4Option(value: string) {
+  return Boolean(value) && COLD_START_Q4_OPTION_VALUES.has(value);
+}
