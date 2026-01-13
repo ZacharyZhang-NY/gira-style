@@ -57,9 +57,10 @@ export function ColdStart() {
     const stored = readLocalStorageJson<StoredColdStart>(STORAGE_KEYS.coldStart);
     if (!stored?.answers) return;
     const normalized = normalizeColdStartAnswers(stored.answers);
-    setAnswers(normalized);
-    setStyleText(normalized.q4);
-  }, []);
+    const hasRequired = Boolean(normalized.q1.trim() && normalized.q2.length && normalized.q3.length);
+    if (!hasRequired) return;
+    router.replace("/studio");
+  }, [router]);
 
   const total = COLD_START_QUESTIONS.length;
   const totalSteps = total + 1;
