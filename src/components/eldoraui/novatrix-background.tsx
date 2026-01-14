@@ -49,7 +49,7 @@ void main() {
 }
 `;
 
-type NovatrixProps = React.HTMLAttributes<HTMLDivElement> & {
+type NovatrixProps = Omit<React.HTMLAttributes<HTMLDivElement>, "color"> & {
   color?: [number, number, number];
   speed?: number;
   amplitude?: number;
