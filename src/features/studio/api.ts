@@ -1,5 +1,6 @@
 "use client";
 
+import type { ColdStartAnswers } from "@/features/cold-start/questions";
 import type { RecommendationItem, RecommendationPayload } from "./types";
 import { getItemImage } from "./item";
 
@@ -19,12 +20,42 @@ type VideoResponse = {
   videoUri?: string;
 };
 
+type CreateSessionRequest = {
+  sessionId: string;
+  preferences: ColdStartAnswers;
+  systemPrompt?: string;
+  userAgent?: string;
+  locale?: string;
+  timezone?: string;
+};
+
+type CreateSessionResponse = {
+  success?: boolean;
+  sessionId?: string;
+  error?: string;
+};
+
+type LogSessionTurnRequest = {
+  turnIndex: number;
+  userMessage: string;
+  assistantResponse: RecommendationPayload;
+  imageData?: string | null;
+  videoData?: string | null;
+  videoUri?: string | null;
+};
+
+type LogSessionTurnResponse = {
+  success?: boolean;
+  error?: string;
+};
+
 type RequestOptions = {
   signal?: AbortSignal;
 };
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const DEFAULT_REMOTE_BACKEND_BASE_URL = "https://aritzia.girastyleai.com";
+const LOCAL_BACKEND_BASE_URL = "http://127.0.0.1:5001";
 
 function stripTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
@@ -39,11 +70,11 @@ function getBackendBaseUrl() {
   const { hostname } = window.location;
 
   if (hostname === "localhost" || hostname === "127.0.0.1") {
-    return DEFAULT_REMOTE_BACKEND_BASE_URL;
+    return LOCAL_BACKEND_BASE_URL;
   }
 
   if (hostname === "aura-style-agent.vercel.app" || hostname.endsWith(".vercel.app")) {
-    return `https://${hostname}`;
+    return DEFAULT_REMOTE_BACKEND_BASE_URL;
   }
 
   const codespacePattern = /-(\d+)\.app\.github\.dev$/;
@@ -273,4 +304,19 @@ export async function generateVideo(
     videoData: payload.video_data,
     videoUri: payload.video_uri,
   };
+}
+
+export async function createSession(request: CreateSessionRequest, options: RequestOptions = {}) {
+  const payload = await requestJson<CreateSessionResponse>("/api/sessions", request, options);
+  if (!payload?.success || !payload.sessionId) {
+    throw new Error(payload?.error || "Session creation failed.");
+  }
+  return payload.sessionId;
+}
+
+export async function logSessionTurn(sessionId: string, request: LogSessionTurnRequest, options: RequestOptions = {}) {
+  const payload = await requestJson<LogSessionTurnResponse>(`/api/sessions/${sessionId}/turns`, request, options);
+  if (!payload?.success) {
+    throw new Error(payload?.error || "Session logging failed.");
+  }
 }

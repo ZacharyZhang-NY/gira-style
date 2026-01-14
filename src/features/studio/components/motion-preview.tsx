@@ -1,8 +1,8 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import * as React from "react";
+import { useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/cn";
-import { luxTween, LUX_DURATION } from "@/lib/motion";
 
 import type { StageState } from "../types";
 import { MediaPlaceholder } from "./media-placeholder";
@@ -25,7 +25,6 @@ type MotionPreviewProps = {
 
 export function MotionPreview({ state, image, video, videoEnabled }: MotionPreviewProps) {
   const shouldReduceMotion = useReducedMotion();
-  const transition = luxTween(shouldReduceMotion, LUX_DURATION.base);
 
   const videoSrc = isVideoSrc(video) ? video : undefined;
   const hasImage = typeof image === "string" && image.length > 0;
@@ -33,48 +32,82 @@ export function MotionPreview({ state, image, video, videoEnabled }: MotionPrevi
   const showMock = !videoEnabled;
   const showVideo = !showMock && state === "done" && Boolean(videoSrc);
   const showImage = !showMock && state === "done" && !videoSrc && hasImage;
+  const [videoReady, setVideoReady] = React.useState(false);
+  const [imageReady, setImageReady] = React.useState(false);
+
+  React.useEffect(() => {
+    setVideoReady(false);
+  }, [videoSrc]);
+
+  React.useEffect(() => {
+    setImageReady(false);
+  }, [image]);
+
+  const flowActive =
+    showLoading ||
+    (showVideo && !videoReady) ||
+    (showImage && !imageReady) ||
+    (!showVideo && !showImage && !showMock);
+  const showPlaceholder =
+    showLoading ||
+    showMock ||
+    (!showVideo && !showImage) ||
+    (showVideo && !videoReady) ||
+    (showImage && !imageReady);
+  const placeholderVariant = flowActive ? "loading" : "mock";
+
+  const handleVideoReady = React.useCallback(() => {
+    if (shouldReduceMotion) {
+      setVideoReady(true);
+      return;
+    }
+    requestAnimationFrame(() => setVideoReady(true));
+  }, [shouldReduceMotion]);
+
+  const handleImageReady = React.useCallback(() => {
+    if (shouldReduceMotion) {
+      setImageReady(true);
+      return;
+    }
+    requestAnimationFrame(() => setImageReady(true));
+  }, [shouldReduceMotion]);
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden">
-      <div
+      <MediaPlaceholder
+        variant={placeholderVariant}
         className={cn(
-          "absolute inset-0",
-          "bg-[radial-gradient(520px_340px_at_22%_18%,rgba(212,175,55,0.18),transparent_62%),radial-gradient(420px_320px_at_82%_12%,rgba(152,187,210,0.14),transparent_58%),linear-gradient(180deg,rgba(255,255,255,0.28),rgba(255,255,255,0.10))]",
-          showLoading && "motion-safe:animate-pulse",
+          "transition-opacity duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]",
+          showPlaceholder ? "opacity-100" : "opacity-0",
         )}
-        aria-hidden="true"
       />
-
-      {showLoading ? (
-        <MediaPlaceholder variant="loading" />
-      ) : showMock ? (
-        <MediaPlaceholder variant="mock" />
-      ) : null}
 
       {showVideo ? (
         <video
-          className="absolute inset-0 h-full w-full origin-center object-cover scale-[1.34]"
+          className={cn(
+            "absolute inset-0 h-full w-full origin-center object-cover scale-[1.34]",
+            "transition-opacity duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]",
+            videoReady ? "opacity-100" : "opacity-0",
+          )}
           src={videoSrc}
           muted
           loop
           playsInline
           autoPlay={!shouldReduceMotion}
+          onLoadedData={handleVideoReady}
+          onCanPlay={handleVideoReady}
         />
       ) : showImage ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={image}
           alt="Motion preview"
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-      ) : null}
-
-      {!shouldReduceMotion ? (
-        <motion.div
-          className="pointer-events-none absolute -left-48 top-0 h-full w-72 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.34),transparent)] opacity-0 mix-blend-overlay"
-          animate={showLoading ? { x: [0, 920], opacity: [0, 0.9, 0] } : { opacity: 0 }}
-          transition={showLoading ? { duration: 2.6, ease: [0.16, 1, 0.3, 1] } : transition}
-          aria-hidden="true"
+          onLoad={handleImageReady}
+          className={cn(
+            "absolute inset-0 h-full w-full object-cover",
+            "transition-opacity duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]",
+            imageReady ? "opacity-100" : "opacity-0",
+          )}
         />
       ) : null}
 

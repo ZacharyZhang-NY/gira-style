@@ -1,7 +1,8 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { useReducedMotion } from "framer-motion";
 
+import Novatrix from "@/components/eldoraui/novatrix-background";
 import { cn } from "@/lib/cn";
 
 type MediaPlaceholderProps = {
@@ -12,58 +13,39 @@ type MediaPlaceholderProps = {
 export function MediaPlaceholder({ variant, className }: MediaPlaceholderProps) {
   const shouldReduceMotion = useReducedMotion();
   const showLoading = variant === "loading";
+  const showFlow = showLoading && !shouldReduceMotion;
+  const showStatic = variant === "mock";
+  const baseBackground =
+    "bg-[radial-gradient(760px_520px_at_18%_20%,rgba(255,236,196,0.18),transparent_62%),radial-gradient(620px_460px_at_82%_80%,rgba(255,255,255,0.98),transparent_70%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(255,255,255,0.84))]";
 
   return (
     <div
-      className={cn("pointer-events-none absolute inset-0 flex items-center justify-center", className)}
+      className={cn("pointer-events-none absolute inset-0", className)}
       aria-hidden="true"
     >
-      <div
-        className={cn(
-          "relative h-[82%] w-[70%] rounded-[32px] border border-glass-border/45",
-          showLoading && "motion-safe:animate-pulse",
-        )}
-      >
-        <svg
-          viewBox="0 0 200 320"
-          aria-hidden="true"
-          className={cn(
-            "absolute inset-0 h-full w-full",
-            variant === "mock" ? "text-muted/45" : "text-muted/35",
-          )}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-        >
-          <rect x="14" y="14" width="172" height="292" rx="30" />
-          <circle cx="100" cy="70" r="20" />
-          <rect
-            x="60"
-            y="104"
-            width="80"
-            height="138"
-            rx="28"
-            fill={variant === "mock" ? "currentColor" : "none"}
-            fillOpacity={variant === "mock" ? 0.12 : 0}
-          />
-          <rect
-            x="70"
-            y="246"
-            width="60"
-            height="36"
-            rx="18"
-            fill={variant === "mock" ? "currentColor" : "none"}
-            fillOpacity={variant === "mock" ? 0.1 : 0}
-          />
-        </svg>
-
-        {!shouldReduceMotion && showLoading ? (
-          <motion.div
-            className="absolute inset-0 rounded-[32px] bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.35),transparent)] opacity-0"
-            animate={{ x: ["-45%", "45%"], opacity: [0, 0.8, 0] }}
-            transition={{ duration: 2.4, repeat: Infinity, ease: [0.16, 1, 0.3, 1] }}
+      <div className="absolute inset-0">
+        <div className={cn("absolute inset-0", baseBackground)} />
+        {showFlow ? (
+          <Novatrix
+            color={[1, 1, 1]}
+            speed={0.5}
+            amplitude={0.08}
+            className="absolute inset-0 opacity-26 [filter:grayscale(1)_sepia(0.12)_saturate(1.01)_brightness(1.06)]"
+            aria-hidden="true"
           />
         ) : null}
+        {showStatic ? (
+          <Novatrix
+            color={[1, 1, 1]}
+            speed={0.5}
+            amplitude={0.08}
+            paused
+            time={2.6}
+            className="absolute inset-0 opacity-26 [filter:grayscale(1)_sepia(0.12)_saturate(1.01)_brightness(1.06)]"
+            aria-hidden="true"
+          />
+        ) : null}
+        <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.26),rgba(255,255,255,0.08)_48%,rgba(255,255,255,0.22))]" />
       </div>
     </div>
   );

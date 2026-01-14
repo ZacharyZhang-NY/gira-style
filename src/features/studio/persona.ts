@@ -10,48 +10,52 @@ function normalizeMultiSelect(value: unknown) {
 
 export function buildStyleDnaLabel(answers: Partial<ColdStartAnswers> | null | undefined) {
   if (!answers) return "";
-  const q1 = typeof answers.q1 === "string" ? answers.q1 : "";
-  const q2 = normalizeMultiSelect(answers.q2).join(", ");
-  const q3 = normalizeMultiSelect(answers.q3).join(", ");
-  return [q1, q2, q3].filter(Boolean).join(" · ");
+  const q1 = normalizeMultiSelect(answers.q1).join(", ");
+  const q2 = typeof answers.q2 === "string" ? answers.q2 : "";
+  const q3 = typeof answers.q3 === "string" ? answers.q3 : "";
+  const q4 = typeof answers.q4 === "string" ? answers.q4 : "";
+  return [q1, q2, q3, q4].filter(Boolean).join(" · ");
 }
 
 export function buildPersonaSummary(answers: Partial<ColdStartAnswers> | null | undefined) {
-  const q1 = answers?.q1 || "";
-  const q2 = normalizeMultiSelect(answers?.q2);
-  const q3 = normalizeMultiSelect(answers?.q3);
+  const q1 = normalizeMultiSelect(answers?.q1);
+  const q2 = typeof answers?.q2 === "string" ? answers.q2 : "";
+  const q3 = typeof answers?.q3 === "string" ? answers.q3 : "";
+  const q4 = typeof answers?.q4 === "string" ? answers.q4 : "";
 
-  const vibe =
-    q1 === "Minimalist Chic"
-      ? "Clean lines and quiet confidence."
-      : q1 === "Soft Romantic"
-        ? "Softness, polish, and an easy elegance."
-        : q1 === "Experimental Edge"
-          ? "Contrast, structure, and a little bite."
-          : q1 === "Vintage Preppy"
-            ? "Classic codes with modern restraint."
-            : "";
+  const vibe = q1.length
+    ? q1.length === 1
+      ? `You feel most at home in ${q1[0]}.`
+      : `You blend ${q1.slice(0, -1).join(", ")} and ${q1[q1.length - 1]}.`
+    : "";
 
   const context =
-    [
-      q2.includes("Everyday") ? "You want repeatable formulas that still feel intentional." : "",
-      q2.includes("Work-ready") ? "You like to look sharp, modern, and fully in control." : "",
-      q2.includes("Date night") ? "You want confidence that reads effortless, not loud." : "",
-      q2.includes("Event / Dress Code") ? "You want to respect the rules—then make them yours." : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
+    q2 === "The Modern Neutrals"
+      ? "Your palette is anchored in modern neutrals."
+      : q2 === "Warm & Earthy"
+        ? "You lean into warm, earthy tones."
+        : q2 === "Vibrant & Playful"
+          ? "You like playful color and prints."
+          : "";
 
   const priority =
-    [
-      q3.includes("Comfort first") ? "Comfort stays non-negotiable." : "",
-      q3.includes("Crisp silhouette") ? "Silhouette comes first—everything else follows." : "",
-      q3.includes("Layering & texture") ? "Texture and layering are your signature moves." : "",
-      q3.includes("Easy to mix & match") ? "You value high re-wear and easy pairings." : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
+    q3 === "Quality & Longevity"
+      ? "You prioritize investment pieces and longevity."
+      : q3 === "Fit & Comfort"
+        ? "Fit and comfort are non-negotiable."
+        : q3 === "Trend & Novelty"
+          ? "You want the it piece of the season."
+          : "";
 
-  const sentence = [vibe, context, priority].filter(Boolean).join(" ");
+  const focus =
+    q4 === "Waist & Silhouette"
+      ? "You like waist definition and sculpted shapes."
+      : q4 === "Legs"
+        ? "You enjoy shorter hemlines or long, leg-lengthening lines."
+        : q4 === "Comfort & Coverage"
+          ? "You prefer relaxed fits with coverage."
+          : "";
+
+  const sentence = [vibe, context, priority, focus].filter(Boolean).join(" ");
   return sentence || "We’ll learn your taste as we go—one great look at a time.";
 }
