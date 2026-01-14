@@ -6,6 +6,9 @@
   "rewrites": [
     { "source": "/api/recommend", "destination": "/api/index.py" },
     { "source": "/api/generate-image", "destination": "/api/index.py" },
+    { "source": "/api/generate-video", "destination": "/api/index.py" },
+    { "source": "/api/sessions", "destination": "/api/index.py" },
+    { "source": "/api/sessions/:path*", "destination": "/api/index.py" },
     { "source": "/health", "destination": "/api/index.py" }
   ]
 }
