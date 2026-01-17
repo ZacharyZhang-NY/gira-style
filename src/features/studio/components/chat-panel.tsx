@@ -26,13 +26,17 @@ type ChatPanelProps = {
   disableVideoToggle: boolean;
   videoEnabled: boolean;
   messages: ChatMessage[];
+  mobileOutputs?: Record<string, React.ReactNode>;
   onSubmitRequest: (value: string) => void;
+  onInterrupt?: () => void;
   onToggleVideo: (value: boolean) => void;
 };
 
 function ChatBubble({ msg }: { msg: ChatMessage }) {
   const shouldReduceMotion = useReducedMotion();
   const transition = luxTween(shouldReduceMotion);
+  const isUser = msg.role === "user";
+  const isAssistant = msg.role === "assistant";
 
   return (
     <motion.div
@@ -48,13 +52,45 @@ function ChatBubble({ msg }: { msg: ChatMessage }) {
         className={cn(
           "w-full px-5 py-4",
           msg.highlight && "shadow-lux-md ui-glass-press",
+          isAssistant && [
+            "max-lg:!bg-white max-lg:!bg-none max-lg:!border max-lg:!border-black/10 max-lg:!shadow-none",
+            "max-lg:text-black",
+          ],
+          isUser && [
+            "!bg-text !bg-none !border-0 !shadow-lux-md",
+            "text-bg",
+          ],
         )}
       >
-        <div className="flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
+        <div
+          className={cn(
+            "flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted",
+            isAssistant && "max-lg:text-black",
+            isUser && "text-bg",
+          )}
+        >
           <span>{msg.heading}</span>
-          {msg.meta ? <span className="text-muted/70">{msg.meta}</span> : null}
+          {msg.meta ? (
+            <span
+              className={cn(
+                "text-muted/70",
+                isAssistant && "max-lg:text-black",
+                isUser && "text-bg/80",
+              )}
+            >
+              {msg.meta}
+            </span>
+          ) : null}
         </div>
-        <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-text">{msg.text}</div>
+        <div
+          className={cn(
+            "mt-2 whitespace-pre-wrap text-sm leading-relaxed text-text",
+            isAssistant && "max-lg:text-black",
+            isUser && "text-bg",
+          )}
+        >
+          {msg.text}
+        </div>
       </Surface>
     </motion.div>
   );
@@ -66,7 +102,9 @@ export function ChatPanel({
   disableVideoToggle,
   videoEnabled,
   messages,
+  mobileOutputs,
   onSubmitRequest,
+  onInterrupt,
   onToggleVideo,
 }: ChatPanelProps) {
   const shouldReduceMotion = useReducedMotion();
@@ -92,18 +130,35 @@ export function ChatPanel({
   }
 
   return (
-    <Surface className="flex h-[min(720px,calc(100vh-140px))] min-h-[520px] flex-col overflow-hidden">
+    <Surface
+      tone="flush"
+      className={cn(
+        "flex h-[min(720px,calc(100vh-140px))] min-h-[520px] flex-col overflow-hidden",
+        "lg:ui-glass",
+        "max-lg:!h-[calc(100vh-140px)] max-lg:!min-h-0 max-lg:!rounded-none",
+      )}
+    >
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
         <AnimatePresence initial={false}>
           <div className="flex flex-col gap-3">
-            {messages.map((msg) => (
-              <ChatBubble key={msg.id} msg={msg} />
-            ))}
+            {messages.map((msg) => {
+              const outputKey = msg.role === "assistant" && msg.id.endsWith("-assistant")
+                ? msg.id.replace(/-assistant$/, "")
+                : null;
+              const output = outputKey ? mobileOutputs?.[outputKey] : null;
+
+              return (
+                <div key={msg.id} className="flex flex-col">
+                  <ChatBubble msg={msg} />
+                  {output ? <div className="mt-4 lg:hidden">{output}</div> : null}
+                </div>
+              );
+            })}
           </div>
         </AnimatePresence>
       </div>
 
-      <div className="px-6 py-5">
+      <div className="px-6 py-5 max-lg:sticky max-lg:bottom-0 max-lg:z-10">
         <form onSubmit={submit} className="space-y-2">
           <div className="flex items-center justify-between rounded-full px-4 py-2 ui-glass-subtle">
             <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
@@ -138,6 +193,17 @@ export function ChatPanel({
               )}
               disabled={disableComposer}
             />
+
+            {isBusy && onInterrupt ? (
+              <Button
+                type="button"
+                tone="outline"
+                onClick={onInterrupt}
+                className="px-4"
+              >
+                Stop
+              </Button>
+            ) : null}
 
             <Button
               type="submit"
