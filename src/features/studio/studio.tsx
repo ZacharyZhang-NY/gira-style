@@ -17,7 +17,6 @@ import { readLocalStorageJson, removeLocalStorageItem, writeLocalStorageJson } f
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
 import { createSession, fetchRecommendation, generateImage, generateVideo, logSessionTurn } from "./api";
-import { MediaPlaceholder } from "./components/media-placeholder";
 import { MotionPreview } from "./components/motion-preview";
 import { OutfitPreview } from "./components/outfit-preview";
 import { ProductGrid } from "./components/product-grid";
@@ -187,6 +186,71 @@ function normalizeStudioState(raw: unknown): StudioState {
   };
 }
 
+type VersionOutputProps = {
+  version: StudioVersion;
+  videoEnabled: boolean;
+  onFeedback: (id: string, value: "up" | "down") => void;
+};
+
+function VersionOutput({ version, videoEnabled, onFeedback }: VersionOutputProps) {
+  const shopItems = version.recommendation ? getPrimaryShopItems(version.recommendation, 4) : [];
+
+  return (
+    <div className="space-y-8">
+      <Surface className="p-8 sm:p-10">
+        {version.stages.a === "loading" ? (
+          <div className="space-y-4">
+            <div className="h-3 w-11/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+            <div className="h-3 w-10/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+            <div className="h-3 w-9/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+            <div className="grid grid-cols-2 gap-6 pt-4">
+              <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
+              <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
+            </div>
+          </div>
+        ) : version.recommendation ? (
+          <div className="space-y-10">
+            {shopItems.length ? <ProductGrid items={shopItems} /> : null}
+
+            {version.recommendation.other_recommendation ? (
+              <div className="flex items-start gap-2 text-sm leading-relaxed text-muted">
+                <Star className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+                <p className="min-w-0">{version.recommendation.other_recommendation}</p>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p className="text-sm leading-relaxed text-muted">
+            {version.stageErrors?.a || "No recommendation available yet."}
+          </p>
+        )}
+      </Surface>
+
+      <div className="mx-auto w-full max-w-6xl">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Surface className="overflow-hidden p-0">
+            <OutfitPreview
+              state={version.stages.b ?? "pending"}
+              image={version.generatedImage}
+              feedback={version.feedback}
+              onFeedback={(value) => onFeedback(version.id, value)}
+            />
+          </Surface>
+
+          <Surface className="overflow-hidden p-0">
+            <MotionPreview
+              state={version.stages.c ?? "pending"}
+              image={version.generatedImage}
+              video={version.generatedVideo}
+              videoEnabled={videoEnabled}
+            />
+          </Surface>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Studio() {
   const router = useRouter();
 
@@ -282,6 +346,45 @@ export function Studio() {
         };
       }),
     }));
+  }, []);
+
+  const interruptGeneration = React.useCallback(() => {
+    runTokenRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setIsGenerating(false);
+
+    setState((prev) => {
+      if (!prev.versions.length) return prev;
+      const lastIndex = prev.versions.length - 1;
+      const current = prev.versions[lastIndex];
+      const stage =
+        current.stages.c === "loading"
+          ? "c"
+          : current.stages.b === "loading"
+            ? "b"
+            : current.stages.a === "loading"
+              ? "a"
+              : null;
+
+      if (!stage) return prev;
+
+      const message =
+        stage === "a"
+          ? "Recommendation interrupted."
+          : stage === "b"
+            ? "Image generation interrupted."
+            : "Video generation interrupted.";
+
+      const next = {
+        ...current,
+        stages: { ...current.stages, [stage]: "error" },
+        stageErrors: { ...(current.stageErrors || {}), [stage]: message },
+      };
+      const versions = [...prev.versions];
+      versions[lastIndex] = next;
+      return { ...prev, versions };
+    });
   }, []);
 
   const runSequence = React.useCallback(
@@ -541,9 +644,9 @@ export function Studio() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 pb-16 pt-10">
-        <div className="grid grid-cols-12 items-start gap-10">
-          <div className="col-span-12 lg:col-span-8">
+      <main className="mx-auto max-w-7xl px-6 pb-16 pt-10 max-lg:px-0 max-lg:pb-0 max-lg:pt-4">
+        <div className="grid grid-cols-12 items-start gap-10 max-lg:gap-0">
+          <div className="col-span-12 lg:col-span-8 hidden lg:block">
             <div className="space-y-10">
               {!versions.length ? (
                 <Surface className="p-8 sm:p-10">
@@ -553,62 +656,13 @@ export function Studio() {
                 </Surface>
               ) : (
                 versions.map((version) => {
-                  const shopItems = version.recommendation ? getPrimaryShopItems(version.recommendation, 4) : [];
-                  const hasImage = Boolean(version.generatedImage);
-
                   return (
-                    <div key={version.id} className="space-y-8">
-                      <Surface className="p-8 sm:p-10">
-                        {version.stages.a === "loading" ? (
-                          <div className="space-y-4">
-                            <div className="h-3 w-11/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-                            <div className="h-3 w-10/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-                            <div className="h-3 w-9/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-                            <div className="grid grid-cols-2 gap-6 pt-4">
-                              <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
-                              <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
-                            </div>
-                          </div>
-                        ) : version.recommendation ? (
-                          <div className="space-y-10">
-                            {shopItems.length ? <ProductGrid items={shopItems} /> : null}
-
-                            {version.recommendation.other_recommendation ? (
-                              <div className="flex items-start gap-2 text-sm leading-relaxed text-muted">
-                                <Star className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
-                                <p className="min-w-0">{version.recommendation.other_recommendation}</p>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <p className="text-sm leading-relaxed text-muted">
-                            {version.stageErrors?.a || "No recommendation available yet."}
-                          </p>
-                        )}
-                      </Surface>
-
-                      <div className="mx-auto w-full max-w-6xl">
-                        <div className="grid gap-6 lg:grid-cols-2">
-                          <Surface className="overflow-hidden p-0">
-                            <OutfitPreview
-                              state={version.stages.b ?? "pending"}
-                              image={version.generatedImage}
-                              feedback={version.feedback}
-                              onFeedback={(value) => recordFeedback(version.id, value)}
-                            />
-                          </Surface>
-
-                          <Surface className="overflow-hidden p-0">
-                            <MotionPreview
-                              state={version.stages.c ?? "pending"}
-                              image={version.generatedImage}
-                              video={version.generatedVideo}
-                              videoEnabled={videoEnabled}
-                            />
-                          </Surface>
-                        </div>
-                      </div>
-                    </div>
+                    <VersionOutput
+                      key={version.id}
+                      version={version}
+                      videoEnabled={videoEnabled}
+                      onFeedback={recordFeedback}
+                    />
                   );
                 })
               )}
@@ -622,7 +676,21 @@ export function Studio() {
               disableVideoToggle={isGenerating || !hydrated}
               videoEnabled={videoEnabled}
               messages={messages}
+              mobileOutputs={Object.fromEntries(
+                versions.map((version) => [
+                  version.id,
+                  (
+                    <VersionOutput
+                      key={`mobile-${version.id}`}
+                      version={version}
+                      videoEnabled={videoEnabled}
+                      onFeedback={recordFeedback}
+                    />
+                  ),
+                ]),
+              )}
               onSubmitRequest={runSequence}
+              onInterrupt={interruptGeneration}
               onToggleVideo={(value) => setVideoEnabled(value)}
             />
           </div>
