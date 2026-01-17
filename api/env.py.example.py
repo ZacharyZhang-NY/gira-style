@@ -1,1 +1,1 @@
-api_key = "Your Google AI Api Key"
+api_key = "YOUR_GEMINI_API_KEY"

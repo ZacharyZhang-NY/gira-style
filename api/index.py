@@ -74,6 +74,7 @@ R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "")
 
 _r2_client = None
+_chat_cache = {}
 
 
 def get_db_connection():
@@ -438,6 +439,7 @@ def get_recommendation():
         data = request.get_json(silent=True) or {}
         user_input = str(data.get('userInput', '')).strip()
         conversation_history = data.get('conversationHistory', [])
+        session_id = normalize_session_id(data.get('sessionId') or data.get('session_id'))
         system_prompt = data.get('systemPrompt', '')
         system_prompt = str(system_prompt).strip() if system_prompt is not None else ''
         if len(system_prompt) > 4000:
@@ -511,19 +513,27 @@ def get_recommendation():
         def stream_recommendation():
             full_text = ""
             try:
-                response_stream = gemini_client.models.generate_content_stream(
-                    model=RECOMMENDATION_MODEL,
-                    contents=context_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        tools=[file_search_tool],
-                        temperature=1.0,  # Gemini 3 is optimized for 1.0
-                        thinking_config=types.ThinkingConfig(
-                            include_thoughts=False,
-                            thinking_level="MINIMAL"  # Use "MINIMAL" or "LOW" for speed
+                chat = None
+                if session_id:
+                    chat = _chat_cache.get(session_id)
+
+                if not chat:
+                    chat = gemini_client.chats.create(
+                        model=RECOMMENDATION_MODEL,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            tools=[file_search_tool],
+                            temperature=1.0,  # Gemini 3 is optimized for 1.0
+                            thinking_config=types.ThinkingConfig(
+                                include_thoughts=False,
+                                thinking_level="MINIMAL"  # Use "MINIMAL" or "LOW" for speed
+                            ),
                         ),
                     )
-                )
+                    if session_id:
+                        _chat_cache[session_id] = chat
+
+                response_stream = chat.send_message_stream(context_prompt)
 
                 for chunk in response_stream:
                     chunk_text = getattr(chunk, "text", None)
