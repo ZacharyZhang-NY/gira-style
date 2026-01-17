@@ -19,17 +19,60 @@ user_shopping_preference = ""
 user_body_highlight = ""
 user_text = ""
 
-RECOMMENDATION_PROMPT = f"""
+def _normalize_list(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _normalize_text(value):
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _normalize_list_string(value):
+    items = _normalize_list(value)
+    if items:
+        return ", ".join(items)
+    return ""
+
+
+def build_recommendation_prompt(preferences=None):
+    style = user_style
+    color = user_color
+    shopping_preference = user_shopping_preference
+    body_highlight = user_body_highlight
+    personal_text = user_text
+
+    if isinstance(preferences, dict):
+        style_values = _normalize_list(preferences.get("q1"))
+        if style_values:
+            style = ", ".join(style_values)
+        color = _normalize_list_string(preferences.get("q2")) or _normalize_text(preferences.get("q2")) or color
+        shopping_preference = (
+            _normalize_list_string(preferences.get("q3")) or _normalize_text(preferences.get("q3")) or shopping_preference
+        )
+        body_highlight = _normalize_text(preferences.get("q4")) or body_highlight
+        personal_text = (
+            _normalize_text(preferences.get("styleNote"))
+            or _normalize_text(preferences.get("style_note"))
+            or personal_text
+        )
+
+    return f"""
 ## ROLE
 You are an expert Senior Personal Stylist. Your goal is to curate a single, cohesive outfit that balances professional styling principles with the user's personal **Style DNA**. You prioritize silhouette harmony, color theory, and intentionality.
 
 ## STEP 1: USER PROFILE ANALYSIS
 Analyze the following inputs to determine the user **Style DNA**:
-- **Style Universe**: {user_style}
-- **Color DNA**: {user_color}
-- **Shopping Preference**: {user_shopping_preference}
-- **Body HIGHLIGHT**: {user_body_highlight}
-- **Personal Manifesto**: {user_text}
+- **Style Universe**: {style}
+- **Color DNA**: {color}
+- **Shopping Preference**: {shopping_preference}
+- **Body HIGHLIGHT**: {body_highlight}
+- **Personal Manifesto**: {personal_text}
 - **Wardrobe Context**: Order history: {ORDER_HISTORY} | Wishlist: {MY_LIST}
 
 ## STEP 2: STYLING CALCULUS
@@ -69,6 +112,9 @@ Return ONLY valid JSON with these fields:
 
 Do NOT output any text outside the JSON.
 """
+
+
+RECOMMENDATION_PROMPT = build_recommendation_prompt()
 
 FOLLOW_UP_PROMPT = """
 Here is the conversation history with previous outfit recommendations:

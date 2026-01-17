@@ -2,8 +2,8 @@ export type ColdStartQuestionId = "q1" | "q2" | "q3" | "q4";
 
 export type ColdStartAnswers = {
   q1: string[];
-  q2: string;
-  q3: string;
+  q2: string[];
+  q3: string[];
   q4: string;
   styleNote: string;
 };
@@ -52,7 +52,8 @@ export const COLD_START_QUESTIONS: ColdStartQuestion[] = [
   {
     id: "q2",
     title: "If we opened your closet right now, which color palette would dominate?",
-    hint: "Pick the palette that shows up most often in your wardrobe.",
+    hint: "Select all that apply.",
+    multi: true,
     options: [
       {
         value: "The Modern Neutrals",
@@ -77,7 +78,8 @@ export const COLD_START_QUESTIONS: ColdStartQuestion[] = [
   {
     id: "q3",
     title: "When adding a new piece to your closet, what is the absolute non-negotiable?",
-    hint: "Choose the priority that never changes for you.",
+    hint: "Select all that apply.",
+    multi: true,
     options: [
       {
         value: "Quality & Longevity",
@@ -125,8 +127,8 @@ export const COLD_START_QUESTIONS: ColdStartQuestion[] = [
 
 export const EMPTY_COLD_START_ANSWERS: ColdStartAnswers = {
   q1: [],
-  q2: "",
-  q3: "",
+  q2: [],
+  q3: [],
   q4: "",
   styleNote: "",
 };

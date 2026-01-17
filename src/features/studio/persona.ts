@@ -11,17 +11,19 @@ function normalizeMultiSelect(value: unknown) {
 export function buildStyleDnaLabel(answers: Partial<ColdStartAnswers> | null | undefined) {
   if (!answers) return "";
   const q1 = normalizeMultiSelect(answers.q1).join(", ");
-  const q2 = typeof answers.q2 === "string" ? answers.q2 : "";
-  const q3 = typeof answers.q3 === "string" ? answers.q3 : "";
+  const q2 = normalizeMultiSelect(answers.q2).join(", ");
+  const q3 = normalizeMultiSelect(answers.q3).join(", ");
   const q4 = typeof answers.q4 === "string" ? answers.q4 : "";
   return [q1, q2, q3, q4].filter(Boolean).join(" · ");
 }
 
 export function buildPersonaSummary(answers: Partial<ColdStartAnswers> | null | undefined) {
   const q1 = normalizeMultiSelect(answers?.q1);
-  const q2 = typeof answers?.q2 === "string" ? answers.q2 : "";
-  const q3 = typeof answers?.q3 === "string" ? answers.q3 : "";
+  const q2 = normalizeMultiSelect(answers?.q2);
+  const q3 = normalizeMultiSelect(answers?.q3);
   const q4 = typeof answers?.q4 === "string" ? answers.q4 : "";
+  const palette = q2[0] ?? "";
+  const priorityValue = q3[0] ?? "";
 
   const vibe = q1.length
     ? q1.length === 1
@@ -30,20 +32,20 @@ export function buildPersonaSummary(answers: Partial<ColdStartAnswers> | null | 
     : "";
 
   const context =
-    q2 === "The Modern Neutrals"
+    palette === "The Modern Neutrals"
       ? "Your palette is anchored in modern neutrals."
-      : q2 === "Warm & Earthy"
+      : palette === "Warm & Earthy"
         ? "You lean into warm, earthy tones."
-        : q2 === "Vibrant & Playful"
+        : palette === "Vibrant & Playful"
           ? "You like playful color and prints."
           : "";
 
   const priority =
-    q3 === "Quality & Longevity"
+    priorityValue === "Quality & Longevity"
       ? "You prioritize investment pieces and longevity."
-      : q3 === "Fit & Comfort"
+      : priorityValue === "Fit & Comfort"
         ? "Fit and comfort are non-negotiable."
-        : q3 === "Trend & Novelty"
+        : priorityValue === "Trend & Novelty"
           ? "You want the it piece of the season."
           : "";
 

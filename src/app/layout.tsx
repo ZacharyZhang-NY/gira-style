@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Playfair_Display } from "next/font/google";
+import { Inter, Jost, Playfair_Display } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/features/theme/theme";
 
@@ -12,6 +12,12 @@ const display = Playfair_Display({
 const sans = Inter({
   subsets: ["latin"],
   variable: "--font-sans",
+  display: "swap",
+});
+
+const jost = Jost({
+  subsets: ["latin"],
+  variable: "--font-jost",
   display: "swap",
 });
 
@@ -31,7 +37,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="scroll-smooth" data-theme="light" suppressHydrationWarning>
-      <body className={`${display.variable} ${sans.variable} font-sans`}>
+      <body className={`${display.variable} ${sans.variable} ${jost.variable} font-sans`}>
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

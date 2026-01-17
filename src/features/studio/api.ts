@@ -12,7 +12,7 @@ type ConversationTurn = {
 type RecommendationRequest = {
   requestText: string;
   conversationHistory: ConversationTurn[];
-  systemPrompt?: string;
+  sessionId?: string;
 };
 
 type VideoResponse = {
@@ -42,12 +42,14 @@ type LogSessionTurnRequest = {
   imageData?: string | null;
   videoData?: string | null;
   videoUri?: string | null;
+  feedback?: "up" | "down" | "";
 };
 
 type LogSessionTurnResponse = {
   success?: boolean;
   error?: string;
 };
+
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -215,7 +217,7 @@ export async function fetchRecommendation(
     body: JSON.stringify({
       userInput: request.requestText,
       conversationHistory: request.conversationHistory,
-      systemPrompt: request.systemPrompt,
+      sessionId: request.sessionId,
     }),
     signal: options.signal,
   });

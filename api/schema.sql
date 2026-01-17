@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS session_turns (
   turn_index integer NOT NULL,
   user_message text NOT NULL,
   assistant_response jsonb NOT NULL,
+  feedback text,
   image_key text,
   image_url text,
   video_key text,

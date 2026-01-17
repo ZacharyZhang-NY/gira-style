@@ -172,6 +172,12 @@ a {
     -webkit-line-clamp: 2;
     overflow: hidden;
   }
+
+  .font-jost {
+    --font-sans: var(--font-jost);
+    --font-display: var(--font-jost);
+    font-family: var(--font-jost);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

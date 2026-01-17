@@ -87,8 +87,8 @@ function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
   const styleNoteCandidate = typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
   return {
     q1: normalizeMultiSelect(candidate.q1),
-    q2: normalizeSingleSelect(candidate.q2),
-    q3: normalizeSingleSelect(candidate.q3),
+    q2: normalizeMultiSelect(candidate.q2),
+    q3: normalizeMultiSelect(candidate.q3),
     q4: q4IsOption ? q4Candidate : "",
     styleNote: styleNoteCandidate || (!q4IsOption ? q4Candidate : ""),
   };
@@ -99,72 +99,6 @@ function createLocalSessionId() {
     return crypto.randomUUID();
   }
   return `session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-function getPaletteGuidance(palette: string) {
-  switch (palette) {
-    case "The Modern Neutrals":
-      return "Agent mode: Monochromatic Chic. Focus on texture differences rather than color contrast.";
-    case "Warm & Earthy":
-      return 'Agent mode: Tonal Layering. Prioritize the "Wilfred" aesthetic and warm-tone lighting in generated images.';
-    case "Vibrant & Playful":
-      return 'Agent mode: Statement Styling. Prioritize "Seasonal" colors and "Sunday Best" prints.';
-    default:
-      return "";
-  }
-}
-
-function getPriorityGuidance(priority: string) {
-  switch (priority) {
-    case "Quality & Longevity":
-      return "Profile: The Investment Shopper. Emphasize natural fibers (wool, silk, cashmere) and durability.";
-    case "Fit & Comfort":
-      return 'Profile: The Fit-Critical Shopper (high return risk). Filter out rigid fabrics; prioritize "True to Size" reviews and stretch/adjustable features to reduce return rates.';
-    case "Trend & Novelty":
-      return 'Profile: The Impulse Shopper. Highlight scarcity ("Selling fast") and social proof ("As seen on TikTok"). Lower price sensitivity if the item is "hot."';
-    default:
-      return "";
-  }
-}
-
-function getHighlightGuidance(focus: string) {
-  switch (focus) {
-    case "Waist & Silhouette":
-      return "Highlight waist definition with belted coats, high-waisted trousers, and bodysuits.";
-    case "Legs":
-      return "Highlight legs with shorter hemlines, split-hem leggings, or elongated fits.";
-    case "Comfort & Coverage":
-      return "Prioritize relaxed coverage with oversized hoodies, wide-leg pants, and flowy midi dresses.";
-    default:
-      return "";
-  }
-}
-
-function buildSystemPrompt(answers: ColdStartAnswers | null) {
-  if (!answers) return "";
-  const parts = [
-    answers.q1.length ? `Style universes: ${answers.q1.join(", ")}.` : "",
-    answers.q2.trim() ? `Color palette: ${answers.q2.trim()}.` : "",
-    answers.q3.trim() ? `Non-negotiable: ${answers.q3.trim()}.` : "",
-    answers.q4.trim() ? `Highlight focus: ${answers.q4.trim()}.` : "",
-    answers.styleNote.trim() ? `Self-described style: ${answers.styleNote.trim()}.` : "",
-  ].filter(Boolean);
-
-  const guidance = [
-    getPaletteGuidance(answers.q2),
-    getPriorityGuidance(answers.q3),
-    getHighlightGuidance(answers.q4),
-  ].filter(Boolean);
-
-  if (!parts.length && !guidance.length) return "";
-
-  const lines = ["User style preferences (from onboarding):", ...parts.map((part) => `- ${part}`)];
-  if (guidance.length) {
-    lines.push("", "Personalization instructions:", ...guidance.map((item) => `- ${item}`));
-  }
-  lines.push("", "Use these preferences as defaults when selecting items and writing styling tips.");
-
-  return lines.join("\n");
 }
 
 function formatError(error: unknown, fallback: string) {
@@ -194,6 +128,7 @@ type VersionOutputProps = {
 
 function VersionOutput({ version, videoEnabled, onFeedback }: VersionOutputProps) {
   const shopItems = version.recommendation ? getPrimaryShopItems(version.recommendation, 4) : [];
+  const previewWidth = "w-full lg:max-w-[320px]";
 
   return (
     <div className="space-y-8">
@@ -227,8 +162,18 @@ function VersionOutput({ version, videoEnabled, onFeedback }: VersionOutputProps
       </Surface>
 
       <div className="mx-auto w-full max-w-6xl">
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Surface className="overflow-hidden p-0">
+        <div
+          className={cn(
+            "grid gap-6 lg:justify-items-center",
+            videoEnabled ? "lg:grid-cols-2" : "lg:grid-cols-1",
+          )}
+        >
+          <Surface
+            className={cn(
+              "overflow-hidden p-0",
+              previewWidth,
+            )}
+          >
             <OutfitPreview
               state={version.stages.b ?? "pending"}
               image={version.generatedImage}
@@ -237,14 +182,16 @@ function VersionOutput({ version, videoEnabled, onFeedback }: VersionOutputProps
             />
           </Surface>
 
-          <Surface className="overflow-hidden p-0">
-            <MotionPreview
-              state={version.stages.c ?? "pending"}
-              image={version.generatedImage}
-              video={version.generatedVideo}
-              videoEnabled={videoEnabled}
-            />
-          </Surface>
+          {videoEnabled ? (
+            <Surface className={cn("overflow-hidden p-0", previewWidth)}>
+              <MotionPreview
+                state={version.stages.c ?? "pending"}
+                image={version.generatedImage}
+                video={version.generatedVideo}
+                videoEnabled={videoEnabled}
+              />
+            </Surface>
+          ) : null}
         </div>
       </div>
     </div>
@@ -255,7 +202,7 @@ export function Studio() {
   const router = useRouter();
 
   const [hydrated, setHydrated] = React.useState(false);
-  const [coldStart, setColdStart] = React.useState<ColdStartAnswers | null>(null);
+  const [, setColdStart] = React.useState<ColdStartAnswers | null>(null);
   const [sessionId, setSessionId] = React.useState<string | null>(null);
   const [sessionReady, setSessionReady] = React.useState(false);
   const [state, setState] = React.useState<StudioState>(EMPTY_STUDIO_STATE);
@@ -279,8 +226,8 @@ export function Studio() {
     } else if (normalizedAnswers) {
       const hasRequired = Boolean(
         normalizedAnswers.q1.length
-          && normalizedAnswers.q2.trim()
-          && normalizedAnswers.q3.trim()
+          && normalizedAnswers.q2.length
+          && normalizedAnswers.q3.length
           && normalizedAnswers.q4.trim(),
       );
       if (hasRequired) {
@@ -426,8 +373,6 @@ export function Studio() {
         )
         .map((v) => ({ user: v.request, assistant: v.recommendation }));
 
-      const systemPrompt = buildSystemPrompt(coldStart);
-
       let stage: "a" | "b" | "c" = "a";
       const isStale = () => runTokenRef.current !== runToken;
 
@@ -435,7 +380,7 @@ export function Studio() {
         const recommendation = await fetchRecommendation({
           requestText: trimmed,
           conversationHistory: history,
-          systemPrompt,
+          sessionId: sessionId ?? undefined,
         }, { signal: controller.signal });
 
         if (isStale()) return;
@@ -533,7 +478,7 @@ export function Studio() {
         }
       }
     },
-    [coldStart, setStageError, sessionId, sessionReady, videoEnabled],
+    [setStageError, sessionId, sessionReady, videoEnabled],
   );
 
   const versions = state.versions;
@@ -565,6 +510,14 @@ export function Studio() {
 
   function recordFeedback(id: string, value: "up" | "down") {
     updateVersion(id, (v) => ({ ...v, feedback: value }));
+    const version = versionsRef.current.find((v) => v.id === id);
+    if (!version || !version.recommendation || !sessionReady || !sessionId) return;
+    void logSessionTurn(sessionId, {
+      turnIndex: version.versionNumber,
+      userMessage: version.request,
+      assistantResponse: version.recommendation,
+      feedback: value,
+    }).catch(() => {});
   }
 
   const messages = React.useMemo(() => {
@@ -572,8 +525,8 @@ export function Studio() {
       {
         id: "intro",
         role: "assistant" as const,
-        heading: "GiraStyle",
-        text: "Tell me what you’re dressing for, and I’ll build a full look—then we’ll refine it together.",
+        heading: "",
+        text: "Hi I'm Gira, your personal stylist. What's in your mind today?",
         highlight: !versions.length && !isGenerating,
       },
     ];
@@ -612,7 +565,7 @@ export function Studio() {
         {
           id: `${v.id}-assistant`,
           role: "assistant" as const,
-          heading: "GiraStyle",
+          heading: "",
           text: assistantText,
           highlight: isSelected,
         },

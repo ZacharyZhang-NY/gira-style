@@ -57,8 +57,8 @@ function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
   const styleNoteCandidate = typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
   return {
     q1: normalizeMultiSelect(candidate.q1),
-    q2: normalizeSingleSelect(candidate.q2),
-    q3: normalizeSingleSelect(candidate.q3),
+    q2: normalizeMultiSelect(candidate.q2),
+    q3: normalizeMultiSelect(candidate.q3),
     q4: isColdStartQ4Option(q4Candidate) ? q4Candidate : "",
     styleNote: styleNoteCandidate || (!isColdStartQ4Option(q4Candidate) ? q4Candidate : ""),
   };
@@ -87,7 +87,7 @@ export function ColdStart() {
     if (!stored?.answers) return;
     const normalized = normalizeColdStartAnswers(stored.answers);
     const hasRequired = Boolean(
-      normalized.q1.length && normalized.q2.trim() && normalized.q3.trim() && normalized.q4.trim(),
+      normalized.q1.length && normalized.q2.length && normalized.q3.length && normalized.q4.trim(),
     );
     if (!hasRequired) return;
     router.replace("/studio");
@@ -274,8 +274,15 @@ export function ColdStart() {
                     </div>
                   ) : (
                     <div className="mt-8 grid gap-4">
-                      {question ? question.options.map((opt) => {
+                  {question ? question.options.map((opt) => {
                         const isSelected = selectedValues.includes(opt.value);
+                        const isQ2 = question.id === "q2";
+                        const showSubtitle = isQ2;
+                        let subtitle = opt.description;
+                        if (isQ2) {
+                          const [beforeAgent] = opt.description.split(/Agent mode:/i);
+                          subtitle = beforeAgent.trim();
+                        }
                         return (
                           <button
                             key={opt.value}
@@ -291,7 +298,9 @@ export function ColdStart() {
                           >
                             <div className="min-w-0">
                               <div className="font-display text-2xl leading-tight tracking-tight text-text">{opt.title}</div>
-                              <div className="mt-2 text-sm leading-relaxed text-muted">{opt.description}</div>
+                              {showSubtitle && subtitle ? (
+                                <div className="mt-2 text-sm leading-relaxed text-muted">{subtitle}</div>
+                              ) : null}
                             </div>
 
                             <div className="mt-1 flex items-center gap-4">
