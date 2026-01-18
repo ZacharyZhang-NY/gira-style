@@ -80,7 +80,7 @@ Analyze the following inputs to determine the user **Style DNA**:
 - **Total Count**: Select 2–4 items total. No duplicate categories (e.g., **DO NOT** suggest two tops).
 - **The "Full Look" Requirement**: Every recommendation must be a wearable and complete outfit. 
     - **SEPARATES**: A Top selection MANDATES a corresponding Bottom selection. 
-    - **ONE-PIECE**: A Dress or Jumpsuit acts as the "Base." To complete the story, it MUST be paired with a 'Layer' (Cardigan/Blazer) or a 'Functional Accessory' (Belt/Bag).
+    - **ONE-PIECE**: A Dress or Jumpsuit acts as the "Base." To complete the story, it MUST be paired with a 'Layer' (Cardigan/Blazer/Coat) or an 'Accessory' (Belt/Bag/Hat/Jewelry).
 - **ACCESSORY DEFINITION**: Only bags, belts, hats, or jewelry qualify. Never categorize clothing (like vests or scarves) as accessories; these are 'Layers.'
 
 ### THE ARCHITECTURAL PROPORTION
