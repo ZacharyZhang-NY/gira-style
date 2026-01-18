@@ -13,15 +13,29 @@ import {
 } from "@/features/cold-start/questions";
 import { ThemeToggle } from "@/features/theme/theme-toggle";
 import { cn } from "@/lib/cn";
-import { readLocalStorageJson, removeLocalStorageItem, writeLocalStorageJson } from "@/lib/storage";
+import {
+  readLocalStorageJson,
+  removeLocalStorageItem,
+  writeLocalStorageJson,
+} from "@/lib/storage";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
-import { createSession, fetchRecommendation, generateImage, generateVideo, logSessionTurn } from "./api";
+import {
+  createSession,
+  fetchRecommendation,
+  generateImage,
+  generateVideo,
+  logSessionTurn,
+} from "./api";
 import { MotionPreview } from "./components/motion-preview";
 import { OutfitPreview } from "./components/outfit-preview";
 import { ProductGrid } from "./components/product-grid";
 import { ChatPanel } from "./components/chat-panel";
-import type { RecommendationPayload, StudioState, StudioVersion } from "./types";
+import type {
+  RecommendationPayload,
+  StudioState,
+  StudioVersion,
+} from "./types";
 
 type StoredColdStart = {
   answers: ColdStartAnswers;
@@ -45,20 +59,24 @@ function nowId() {
 
 function getPrimaryShopItems(payload: RecommendationPayload, max = 4) {
   const outfit = Array.isArray(payload.outfit) ? payload.outfit : [];
-  if (outfit.length) return outfit.slice(0, max);
-  const accessories = Array.isArray(payload.accessories) ? payload.accessories : [];
-  return accessories.slice(0, max);
+  const accessories = Array.isArray(payload.accessories)
+    ? payload.accessories
+    : [];
+  return [...outfit, ...accessories].slice(0, max);
 }
-
 function getOutfitItems(payload: RecommendationPayload) {
-  if (Array.isArray(payload.outfit) && payload.outfit.length) return payload.outfit;
+  if (Array.isArray(payload.outfit) && payload.outfit.length)
+    return payload.outfit;
   if (Array.isArray(payload.accessories)) return payload.accessories;
   return [];
 }
 
 function normalizeMultiSelect(value: unknown) {
   if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return value.filter(
+      (item): item is string =>
+        typeof item === "string" && item.trim().length > 0,
+    );
   }
   if (typeof value === "string" && value.trim()) return [value.trim()];
   return [];
@@ -67,7 +85,10 @@ function normalizeMultiSelect(value: unknown) {
 function normalizeSingleSelect(value: unknown) {
   if (typeof value === "string") return value.trim();
   if (Array.isArray(value)) {
-    const first = value.find((item): item is string => typeof item === "string" && item.trim().length > 0);
+    const first = value.find(
+      (item): item is string =>
+        typeof item === "string" && item.trim().length > 0,
+    );
     return first?.trim() ?? "";
   }
   return "";
@@ -84,7 +105,8 @@ function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
   };
   const q4Candidate = normalizeSingleSelect(candidate.q4);
   const q4IsOption = isColdStartQ4Option(q4Candidate);
-  const styleNoteCandidate = typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
+  const styleNoteCandidate =
+    typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
   return {
     q1: normalizeMultiSelect(candidate.q1),
     q2: normalizeMultiSelect(candidate.q2),
@@ -110,25 +132,37 @@ function formatError(error: unknown, fallback: string) {
 function normalizeStudioState(raw: unknown): StudioState {
   if (!raw || typeof raw !== "object") return EMPTY_STUDIO_STATE;
   const candidate = raw as Partial<StudioState>;
-  const versions = Array.isArray(candidate.versions) ? (candidate.versions as StudioVersion[]) : [];
-  const selectedIndex = Number.isInteger(candidate.selectedIndex) ? (candidate.selectedIndex as number) : 0;
-  const boundedIndex = versions.length ? clamp(selectedIndex, 0, versions.length - 1) : 0;
+  const versions = Array.isArray(candidate.versions)
+    ? (candidate.versions as StudioVersion[])
+    : [];
+  const selectedIndex = Number.isInteger(candidate.selectedIndex)
+    ? (candidate.selectedIndex as number)
+    : 0;
+  const boundedIndex = versions.length
+    ? clamp(selectedIndex, 0, versions.length - 1)
+    : 0;
   return {
     versions,
     selectedIndex: boundedIndex,
-    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : "",
+    updatedAt:
+      typeof candidate.updatedAt === "string" ? candidate.updatedAt : "",
   };
 }
 
 type VersionOutputProps = {
   version: StudioVersion;
-  videoEnabled: boolean;
   onFeedback: (id: string, value: "up" | "down") => void;
 };
 
-function VersionOutput({ version, videoEnabled, onFeedback }: VersionOutputProps) {
-  const shopItems = version.recommendation ? getPrimaryShopItems(version.recommendation, 4) : [];
+function VersionOutput({
+  version,
+  onFeedback,
+}: VersionOutputProps) {
+  const shopItems = version.recommendation
+    ? getPrimaryShopItems(version.recommendation, 4)
+    : [];
   const previewWidth = "w-full lg:max-w-[320px]";
+  const videoPreviewEnabled = version.videoPreviewEnabled ?? true;
 
   return (
     <div className="space-y-8">
@@ -149,8 +183,13 @@ function VersionOutput({ version, videoEnabled, onFeedback }: VersionOutputProps
 
             {version.recommendation.other_recommendation ? (
               <div className="flex items-start gap-2 text-sm leading-relaxed text-muted">
-                <Star className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
-                <p className="min-w-0">{version.recommendation.other_recommendation}</p>
+                <Star
+                  className="mt-0.5 h-4 w-4 shrink-0 text-gold"
+                  aria-hidden="true"
+                />
+                <p className="min-w-0">
+                  {version.recommendation.other_recommendation}
+                </p>
               </div>
             ) : null}
           </div>
@@ -165,15 +204,10 @@ function VersionOutput({ version, videoEnabled, onFeedback }: VersionOutputProps
         <div
           className={cn(
             "grid gap-6 lg:justify-items-center",
-            videoEnabled ? "lg:grid-cols-2" : "lg:grid-cols-1",
+            videoPreviewEnabled ? "lg:grid-cols-2" : "lg:grid-cols-1",
           )}
         >
-          <Surface
-            className={cn(
-              "overflow-hidden p-0",
-              previewWidth,
-            )}
-          >
+          <Surface className={cn("overflow-hidden p-0", previewWidth)}>
             <OutfitPreview
               state={version.stages.b ?? "pending"}
               image={version.generatedImage}
@@ -182,13 +216,13 @@ function VersionOutput({ version, videoEnabled, onFeedback }: VersionOutputProps
             />
           </Surface>
 
-          {videoEnabled ? (
+          {videoPreviewEnabled ? (
             <Surface className={cn("overflow-hidden p-0", previewWidth)}>
               <MotionPreview
                 state={version.stages.c ?? "pending"}
                 image={version.generatedImage}
                 video={version.generatedVideo}
-                videoEnabled={videoEnabled}
+                videoEnabled={videoPreviewEnabled}
               />
             </Surface>
           ) : null}
@@ -208,32 +242,44 @@ export function Studio() {
   const [state, setState] = React.useState<StudioState>(EMPTY_STUDIO_STATE);
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [videoEnabled, setVideoEnabled] = React.useState(true);
+  const videoEnabledRef = React.useRef(videoEnabled);
   const runTokenRef = React.useRef(0);
   const abortRef = React.useRef<AbortController | null>(null);
 
   const versionsRef = React.useRef<StudioVersion[]>([]);
+  const outputEndRef = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
     versionsRef.current = state.versions;
   }, [state.versions]);
+  React.useEffect(() => {
+    videoEnabledRef.current = videoEnabled;
+  }, [videoEnabled]);
 
   React.useEffect(() => {
-    const storedColdStart = readLocalStorageJson<StoredColdStart>(STORAGE_KEYS.coldStart);
-    const normalizedAnswers = storedColdStart?.answers ? normalizeColdStartAnswers(storedColdStart.answers) : null;
+    const storedColdStart = readLocalStorageJson<StoredColdStart>(
+      STORAGE_KEYS.coldStart,
+    );
+    const normalizedAnswers = storedColdStart?.answers
+      ? normalizeColdStartAnswers(storedColdStart.answers)
+      : null;
     setColdStart(normalizedAnswers);
     if (storedColdStart?.sessionId) {
       setSessionId(storedColdStart.sessionId);
       setSessionReady(true);
     } else if (normalizedAnswers) {
       const hasRequired = Boolean(
-        normalizedAnswers.q1.length
-          && normalizedAnswers.q2.length
-          && normalizedAnswers.q3.length
-          && normalizedAnswers.q4.trim(),
+        normalizedAnswers.q1.length &&
+        normalizedAnswers.q2.length &&
+        normalizedAnswers.q3.length &&
+        normalizedAnswers.q4.trim(),
       );
       if (hasRequired) {
         const nextSessionId = createLocalSessionId();
         writeLocalStorageJson(STORAGE_KEYS.coldStart, {
-          ...(storedColdStart || { answers: normalizedAnswers, updatedAt: new Date().toISOString() }),
+          ...(storedColdStart || {
+            answers: normalizedAnswers,
+            updatedAt: new Date().toISOString(),
+          }),
           sessionId: nextSessionId,
         });
         setSessionId(nextSessionId);
@@ -254,10 +300,14 @@ export function Studio() {
       }
     }
 
-    const storedStudio = readLocalStorageJson<StudioState>(STORAGE_KEYS.studioVersions);
+    const storedStudio = readLocalStorageJson<StudioState>(
+      STORAGE_KEYS.studioVersions,
+    );
     if (storedStudio) setState(normalizeStudioState(storedStudio));
 
-    const storedVideo = readLocalStorageJson<boolean>(STORAGE_KEYS.videoPreview);
+    const storedVideo = readLocalStorageJson<boolean>(
+      STORAGE_KEYS.videoPreview,
+    );
     if (typeof storedVideo === "boolean") setVideoEnabled(storedVideo);
 
     setHydrated(true);
@@ -265,7 +315,10 @@ export function Studio() {
 
   React.useEffect(() => {
     if (!hydrated) return;
-    const payload: StudioState = { ...state, updatedAt: new Date().toISOString() };
+    const payload: StudioState = {
+      ...state,
+      updatedAt: new Date().toISOString(),
+    };
     writeLocalStorageJson(STORAGE_KEYS.studioVersions, payload);
   }, [hydrated, state]);
 
@@ -274,25 +327,41 @@ export function Studio() {
     writeLocalStorageJson(STORAGE_KEYS.videoPreview, videoEnabled);
   }, [hydrated, videoEnabled]);
 
-  const setStageError = React.useCallback((id: string, stage: "a" | "b" | "c", error: unknown) => {
-    const fallback =
-      stage === "a"
-        ? "Recommendation failed. Please try again."
-        : stage === "b"
-          ? "Image generation failed. Please try again."
-          : "Video generation failed. Please try again.";
-    const message = formatError(error, fallback);
-    setState((prev) => ({
-      ...prev,
-      versions: prev.versions.map((v) => {
-        if (v.id !== id) return v;
-        return {
-          ...v,
-          stages: { ...v.stages, [stage]: "error" },
-          stageErrors: { ...(v.stageErrors || {}), [stage]: message },
-        };
-      }),
-    }));
+  const setStageError = React.useCallback(
+    (id: string, stage: "a" | "b" | "c", error: unknown) => {
+      const fallback =
+        stage === "a"
+          ? "Recommendation failed. Please try again."
+          : stage === "b"
+            ? "Image generation failed. Please try again."
+            : "Video generation failed. Please try again.";
+      const message = formatError(error, fallback);
+      setState((prev) => ({
+        ...prev,
+        versions: prev.versions.map((v) => {
+          if (v.id !== id) return v;
+          return {
+            ...v,
+            stages: { ...v.stages, [stage]: "error" },
+            stageErrors: { ...(v.stageErrors || {}), [stage]: message },
+          };
+        }),
+      }));
+    },
+    [],
+  );
+
+  const handleToggleVideo = React.useCallback((value: boolean) => {
+    videoEnabledRef.current = value;
+    setVideoEnabled(value);
+    setState((prev) => {
+      if (!prev.versions.length) return prev;
+      const versions = [...prev.versions];
+      const lastIndex = versions.length - 1;
+      const current = versions[lastIndex];
+      versions[lastIndex] = { ...current, videoPreviewEnabled: value };
+      return { ...prev, versions };
+    });
   }, []);
 
   const interruptGeneration = React.useCallback(() => {
@@ -359,6 +428,7 @@ export function Studio() {
         feedback: "",
         stages: { a: "loading", b: "pending", c: "pending" },
         stageErrors: {},
+        videoPreviewEnabled: videoEnabled,
       };
 
       setState({
@@ -369,7 +439,8 @@ export function Studio() {
 
       const history = previous
         .filter(
-          (v): v is StudioVersion & { recommendation: RecommendationPayload } => Boolean(v.recommendation),
+          (v): v is StudioVersion & { recommendation: RecommendationPayload } =>
+            Boolean(v.recommendation),
         )
         .map((v) => ({ user: v.request, assistant: v.recommendation }));
 
@@ -377,11 +448,14 @@ export function Studio() {
       const isStale = () => runTokenRef.current !== runToken;
 
       try {
-        const recommendation = await fetchRecommendation({
-          requestText: trimmed,
-          conversationHistory: history,
-          sessionId: sessionId ?? undefined,
-        }, { signal: controller.signal });
+        const recommendation = await fetchRecommendation(
+          {
+            requestText: trimmed,
+            conversationHistory: history,
+            sessionId: sessionId ?? undefined,
+          },
+          { signal: controller.signal },
+        );
 
         if (isStale()) return;
 
@@ -389,7 +463,11 @@ export function Studio() {
           ...prev,
           versions: prev.versions.map((v) =>
             v.id === id
-              ? { ...v, stages: { ...v.stages, a: "done", b: "loading" }, recommendation }
+              ? {
+                  ...v,
+                  stages: { ...v.stages, a: "done", b: "loading" },
+                  recommendation,
+                }
               : v,
           ),
         }));
@@ -409,9 +487,13 @@ export function Studio() {
 
         stage = "b";
         const outfitItems = getOutfitItems(recommendation);
-        const imageData = await generateImage(outfitItems, { signal: controller.signal });
+        const imageData = await generateImage(outfitItems, {
+          signal: controller.signal,
+        });
 
         if (isStale()) return;
+
+        const shouldGenerateVideo = videoEnabledRef.current;
 
         setState((prev) => ({
           ...prev,
@@ -419,8 +501,13 @@ export function Studio() {
             v.id === id
               ? {
                   ...v,
-                  stages: { ...v.stages, b: "done", c: videoEnabled ? "loading" : "done" },
+                  stages: {
+                    ...v.stages,
+                    b: "done",
+                    c: shouldGenerateVideo ? "loading" : "done",
+                  },
                   generatedImage: imageData,
+                  videoPreviewEnabled: shouldGenerateVideo,
                 }
               : v,
           ),
@@ -439,10 +526,12 @@ export function Studio() {
           });
         }
 
-        if (!videoEnabled) return;
+        if (!shouldGenerateVideo) return;
 
         stage = "c";
-        const video = await generateVideo(imageData, outfitItems, { signal: controller.signal });
+        const video = await generateVideo(imageData, outfitItems, {
+          signal: controller.signal,
+        });
         const videoSource = video.videoData || video.videoUri;
 
         if (isStale()) return;
@@ -450,7 +539,13 @@ export function Studio() {
         setState((prev) => ({
           ...prev,
           versions: prev.versions.map((v) =>
-            v.id === id ? { ...v, stages: { ...v.stages, c: "done" }, generatedVideo: videoSource } : v,
+            v.id === id
+              ? {
+                  ...v,
+                  stages: { ...v.stages, c: "done" },
+                  generatedVideo: videoSource,
+                }
+              : v,
           ),
         }));
 
@@ -482,7 +577,9 @@ export function Studio() {
   );
 
   const versions = state.versions;
-  const latestVersionId = versions.length ? versions[versions.length - 1]?.id : null;
+  const latestVersionId = versions.length
+    ? versions[versions.length - 1]?.id
+    : null;
 
   function startOver() {
     runTokenRef.current += 1;
@@ -501,7 +598,10 @@ export function Studio() {
     router.push("/start");
   }
 
-  function updateVersion(id: string, updater: (v: StudioVersion) => StudioVersion) {
+  function updateVersion(
+    id: string,
+    updater: (v: StudioVersion) => StudioVersion,
+  ) {
     setState((prev) => ({
       ...prev,
       versions: prev.versions.map((v) => (v.id === id ? updater(v) : v)),
@@ -511,7 +611,8 @@ export function Studio() {
   function recordFeedback(id: string, value: "up" | "down") {
     updateVersion(id, (v) => ({ ...v, feedback: value }));
     const version = versionsRef.current.find((v) => v.id === id);
-    if (!version || !version.recommendation || !sessionReady || !sessionId) return;
+    if (!version || !version.recommendation || !sessionReady || !sessionId)
+      return;
     void logSessionTurn(sessionId, {
       turnIndex: version.versionNumber,
       userMessage: version.request,
@@ -536,15 +637,13 @@ export function Studio() {
       const formattedResponse = v.recommendation?.formatted_response?.trim();
       const description = v.recommendation?.description?.trim();
       const reason = v.recommendation?.reason?.trim();
-      const preferenceText = formattedResponse
+      const responseText = formattedResponse
         ? formattedResponse
         : [description, reason].filter(Boolean).join("\n\n");
       const baseText =
         v.stages.a === "loading"
           ? "Give me a moment—I’m pulling pieces that match your vibe."
-          : preferenceText
-            ? `${preferenceText}\n\nWant it sharper, softer, darker, or more relaxed? Tell me.`
-            : "I’m ready when you are.";
+          : responseText || "I’m ready when you are.";
 
       const errorNotes = [
         v.stageErrors?.a ? `Recommendation issue: ${v.stageErrors.a}` : "",
@@ -552,13 +651,14 @@ export function Studio() {
         v.stageErrors?.c ? `Video preview issue: ${v.stageErrors.c}` : "",
       ].filter(Boolean);
 
-      const assistantText = errorNotes.length ? `${baseText}\n\n${errorNotes.join("\n")}` : baseText;
+      const assistantText = errorNotes.length
+        ? `${baseText}\n\n${errorNotes.join("\n")}`
+        : baseText;
 
       return [
         {
           id: `${v.id}-user`,
           role: "user" as const,
-          heading: "You",
           text: v.request,
           highlight: isSelected,
         },
@@ -575,13 +675,22 @@ export function Studio() {
     return [...base, ...versionMessages];
   }, [isGenerating, latestVersionId, versions]);
 
+  React.useEffect(() => {
+    if (!versions.length) return;
+    requestAnimationFrame(() => {
+      outputEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
+  }, [versions.length]);
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30">
         <div className="mx-auto max-w-7xl px-6 pt-5">
           <div className="flex items-center justify-between gap-4 rounded-full px-4 py-3 ui-glass-liquid">
             <Link href="/" className="flex items-baseline gap-2">
-              <span className="font-display text-lg leading-none tracking-tight text-text">GiraStyle</span>
+              <span className="font-display text-lg leading-none tracking-tight text-text">
+                GiraStyle
+              </span>
               <span className="hidden text-[11px] font-semibold uppercase tracking-[0.22em] text-muted sm:inline">
                 Studio
               </span>
@@ -604,18 +713,20 @@ export function Studio() {
               {!versions.length ? (
                 <Surface className="p-8 sm:p-10">
                   <p className="text-sm leading-relaxed text-muted">
-                    Ask for a look in the chat, and your versions will appear here.
+                    Ask for a look in the chat, and your versions will appear
+                    here.
                   </p>
                 </Surface>
               ) : (
-                versions.map((version) => {
+                versions.map((version, index) => {
+                  const isLast = index === versions.length - 1;
                   return (
-                    <VersionOutput
-                      key={version.id}
-                      version={version}
-                      videoEnabled={videoEnabled}
-                      onFeedback={recordFeedback}
-                    />
+                    <div key={version.id} ref={isLast ? outputEndRef : undefined}>
+                      <VersionOutput
+                        version={version}
+                        onFeedback={recordFeedback}
+                      />
+                    </div>
                   );
                 })
               )}
@@ -632,19 +743,16 @@ export function Studio() {
               mobileOutputs={Object.fromEntries(
                 versions.map((version) => [
                   version.id,
-                  (
-                    <VersionOutput
-                      key={`mobile-${version.id}`}
-                      version={version}
-                      videoEnabled={videoEnabled}
-                      onFeedback={recordFeedback}
-                    />
-                  ),
+                  <VersionOutput
+                    key={`mobile-${version.id}`}
+                    version={version}
+                    onFeedback={recordFeedback}
+                  />,
                 ]),
               )}
               onSubmitRequest={runSequence}
               onInterrupt={interruptGeneration}
-              onToggleVideo={(value) => setVideoEnabled(value)}
+              onToggleVideo={handleToggleVideo}
             />
           </div>
         </div>

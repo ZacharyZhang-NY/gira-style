@@ -117,13 +117,19 @@ export function ChatPanel({
   const [error, setError] = React.useState("");
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
 
-  React.useEffect(() => {
+  const scrollToBottom = React.useCallback((behavior: ScrollBehavior = "auto") => {
     if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length]);
+    scrollRef.current.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior,
+    });
+  }, []);
 
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
+  React.useEffect(() => {
+    requestAnimationFrame(() => scrollToBottom("smooth"));
+  }, [messages.length, scrollToBottom]);
+
+  function handleSubmit() {
     const trimmed = value.trim();
     if (!trimmed) {
       setError("Type a request first—one sentence is enough.");
@@ -134,6 +140,10 @@ export function ChatPanel({
     onSubmitRequest(trimmed);
   }
 
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    handleSubmit();
+  }
   return (
     <Surface
       tone="flush"
@@ -189,6 +199,13 @@ export function ChatPanel({
               onChange={(e) => {
                 setValue(e.target.value);
                 setError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) {
+                  return;
+                }
+                e.preventDefault();
+                handleSubmit();
               }}
               rows={1}
               className={cn(
