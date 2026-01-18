@@ -1,6 +1,10 @@
 import { Studio } from "@/features/studio/studio";
 
 export default function StudioPage() {
-  return <Studio />;
+  return (
+    <div className="font-jost">
+      <Studio />
+    </div>
+  );
 }
 

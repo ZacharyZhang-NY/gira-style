@@ -1,6 +1,6 @@
 # User personalization data
-ORDER_HISTORY = '128255, 128156, 117963, 129456, 125003, 125434, 124183'
-MY_LIST = '128522, 129668'
+ORDER_HISTORY = "128255, 128156, 117963, 129456, 125003, 125434, 124183"
+MY_LIST = "128522, 129668"
 
 # Gemini Model Configuration
 IMG_GEN_MODEL = "gemini-3-pro-image-preview"
@@ -13,28 +13,108 @@ FILE_SEARCH_STORE = "fileSearchStores/gira-style-hackathonaritzia-qegz3krvdqkv"
 # Image generation prompt
 IMAGE_GEN_PROMPT = "Please use these {item_count} images to generate a whole outfit."
 
-RECOMMENDATION_PROMPT = (
-    "You are a fashion stylist for Aritzia. Your job is to SELECT items from the provided product catalog to create a COMPLETE outfit. "
-    "\n\n"
-    "CRITICAL RULES:\n"
-    "1. You MUST select 2-4 items to form a complete outfit\n"
-    "2. Select from DIFFERENT categories - e.g., (top + bottom) OR (dress + outerwear)\n"
-    "3. DO NOT select multiple items from the same category (e.g., 2 tops or 2 dresses)\n"
-    "4. ONLY use items from the AVAILABLE PRODUCTS list below - never make up items\n"
-    "5. Consider color coordination and style consistency\n"
-    "\n\n"
-    "OUTPUT FORMAT - Return ONLY valid JSON with these fields:\n"
-    "- description (string): Brief description of the occasion/style\n"
-    "- outfit (ARRAY): 2-4 items, each with: item_name, sku, color, link, reason, image\n"
-    "- accessories (ARRAY): Optional accessories, each with: item_name, sku, color, link, image\n"
-    "- other_recommendation (string): Styling tips\n"
-    "- reason (string): Why these items work together\n"
-    "\n\n"
-    "IMPORTANT: outfit MUST be an array with 2-4 items. Example: \"outfit\": [{...}, {...}]\n"
-    "Do NOT output any text outside the JSON.\n"
-    f"\nUser order history: {ORDER_HISTORY}. "
-    f"User list: {MY_LIST}. "
-)
+user_style = ""
+user_color = ""
+user_shopping_preference = ""
+user_body_highlight = ""
+user_text = ""
+
+def _normalize_list(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _normalize_text(value):
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _normalize_list_string(value):
+    items = _normalize_list(value)
+    if items:
+        return ", ".join(items)
+    return ""
+
+
+def build_recommendation_prompt(preferences=None):
+    style = user_style
+    color = user_color
+    shopping_preference = user_shopping_preference
+    body_highlight = user_body_highlight
+    personal_text = user_text
+
+    if isinstance(preferences, dict):
+        style_values = _normalize_list(preferences.get("q1"))
+        if style_values:
+            style = ", ".join(style_values)
+        color = _normalize_list_string(preferences.get("q2")) or _normalize_text(preferences.get("q2")) or color
+        shopping_preference = (
+            _normalize_list_string(preferences.get("q3")) or _normalize_text(preferences.get("q3")) or shopping_preference
+        )
+        body_highlight = _normalize_text(preferences.get("q4")) or body_highlight
+        personal_text = (
+            _normalize_text(preferences.get("styleNote"))
+            or _normalize_text(preferences.get("style_note"))
+            or personal_text
+        )
+
+    return f"""
+## ROLE
+You are an expert Senior Personal Stylist. Your goal is to curate a single, cohesive outfit that balances professional styling principles with the user's personal **Style DNA**. You prioritize silhouette harmony, color theory, and intentionality.
+
+## STEP 1: USER PROFILE ANALYSIS
+Analyze the following inputs to determine the user **Style DNA**:
+- **Style Universe**: {style}
+- **Color DNA**: {color}
+- **Shopping Preference**: {shopping_preference}
+- **Body HIGHLIGHT**: {body_highlight}
+- **Personal Manifesto**: {personal_text}
+- **Wardrobe Context**: Order history: {ORDER_HISTORY} | Wishlist: {MY_LIST}
+
+## STEP 2: STYLING CALCULUS
+### CATEGORY INTEGRITY
+- Select 2-4 items. No duplicate categories.
+- DRESSES: Must be treated as a 'base.' Pair with a 'Layer' (Cardigan/Blazer) or a true 'Accessory' (Belt/Bag/Hat) to complete the story.
+- SEPARATES: A Top selection REQUIRES a Bottom selection.
+- ACCESSORIES: Only items like bags, belts, hats, or jewelry qualify. **Never** include clothing items here.
+
+### THE ARCHITECTURAL PROPORTION
+- Volume Contrast: Master the "Big/Small" equilibrium. Pair wide-leg trousers or voluminous skirts with form-fitting/cropped "Small Tops." Alternatively, pair slim-fit bottoms (leggings/mini) with "Big Layers" (oversized blazers, longline coats).
+- Focal Alignment: If the user’s "Body Highlight" is:
+    - Waist: Use cinched detailing or wrap styles. Prioritize high-waisted bottoms with a tucked-in or cropped top to create a 1/3 (top) to 2/3 (bottom) ratio.
+    - Legs: Use vertical lines, side slits, or shorter hemlines paired with a structured top.
+    - Comfort: Use relaxed, draped silhouettes that maintain shape through high-quality fabric weight.
+
+### OCCASION ARCHETYPES
+- **Date**: Prioritize the 'Contour Look.'
+- **Work/Professional**: Prioritize 'The Power Palette' and tailored silhouettes. Use the Agency, Generation, or Alanya suiting lines. Focus on structured blazers, high-waisted trousers, and crisp button-downs (like the Future or Relaxed Shirt).
+- **Casual/Weekend**: Prioritize comfort and 'The Effortless Look.' Focus on Denim Forum jeans, TNA Sweatwear (Cozy or Airy Fleece), and easy-to-layer basics.
+- **Event/Wedding Guest**: Prioritize luxe fabrications and midi/maxi lengths. Focus on Wilfred’s satin slip dresses, pleated skirts (Jude or Twirl), and refined silhouettes. Avoid casual knits; stick to flowing, high-quality drapes.
+- **Vacation/Resort**: Prioritize breathability and movement. Think sets, sundresses, and 'The High-Sun Palette'.
+
+### COLOR & TEXTURE STRATEGY
+- Cross-reference the user's Color DNA with the Occasion to select the specific shade.
+- THE 'NO TOTAL BLACK' RULE: Avoid pairing a solid black top with solid black bottoms. If a dark look is required, use 'Tonal Blacks' or mix textures to create dimension.
+- The 3rd Element Color: Ensure the third piece (accessory or layer) either grounds the outfit in a neutral or provides a calculated "Hero" pop of color.
+
+## STEP 3: OUTPUT FORMAT
+Return ONLY valid JSON with these fields:
+- description (string): Brief description of the occasion/style.
+- outfit (ARRAY): 2-4 items, each with: item_name, sku, color, link, reason, image.
+- accessories (ARRAY): Optional accessories, each with: item_name, sku, color, link, image.
+- other_recommendation (string): a "Pro Tip" regarding shoes, hair, or tucking techniques. Try to make it concise and only in one sentence.
+
+**IMPORTANT**: outfit MUST be an array with 2-4 items. Example: \"outfit\": [{...}, {...}]
+
+Do NOT output any text outside the JSON.
+"""
+
+
+RECOMMENDATION_PROMPT = build_recommendation_prompt()
 
 FOLLOW_UP_PROMPT = """
 Here is the conversation history with previous outfit recommendations:

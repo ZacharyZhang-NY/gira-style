@@ -37,6 +37,7 @@ function ChatBubble({ msg }: { msg: ChatMessage }) {
   const transition = luxTween(shouldReduceMotion);
   const isUser = msg.role === "user";
   const isAssistant = msg.role === "assistant";
+  const hasHeader = Boolean(msg.heading?.trim() || msg.meta);
 
   return (
     <motion.div
@@ -57,34 +58,38 @@ function ChatBubble({ msg }: { msg: ChatMessage }) {
             "max-lg:text-black",
           ],
           isUser && [
-            "!bg-text !bg-none !border-0 !shadow-lux-md",
+            "!bg-text/80 !bg-none !border-0 !shadow-lux-md",
             "text-bg",
+            "max-w-[85%] ml-auto",
           ],
         )}
       >
+        {hasHeader ? (
+          <div
+            className={cn(
+              "flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted",
+              isAssistant && "max-lg:text-black",
+              isUser && "text-bg",
+            )}
+          >
+            <span>{msg.heading}</span>
+            {msg.meta ? (
+              <span
+                className={cn(
+                  "text-muted/70",
+                  isAssistant && "max-lg:text-black",
+                  isUser && "text-bg/80",
+                )}
+              >
+                {msg.meta}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div
           className={cn(
-            "flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted",
-            isAssistant && "max-lg:text-black",
-            isUser && "text-bg",
-          )}
-        >
-          <span>{msg.heading}</span>
-          {msg.meta ? (
-            <span
-              className={cn(
-                "text-muted/70",
-                isAssistant && "max-lg:text-black",
-                isUser && "text-bg/80",
-              )}
-            >
-              {msg.meta}
-            </span>
-          ) : null}
-        </div>
-        <div
-          className={cn(
-            "mt-2 whitespace-pre-wrap text-sm leading-relaxed text-text",
+            "whitespace-pre-wrap text-sm leading-relaxed text-text",
+            hasHeader && "mt-2",
             isAssistant && "max-lg:text-black",
             isUser && "text-bg",
           )}
@@ -211,7 +216,7 @@ export function ChatPanel({
               disabled={disableComposer}
               className="px-5"
             >
-              Refine
+              Send
             </Button>
           </div>
 

@@ -16,8 +16,10 @@ export function mockRecommendation(args: {
   versionNumber: number;
 }): RecommendationPayload {
   const vibeSelections = normalizeMultiSelect(args.answers?.q1);
-  const palette = typeof args.answers?.q2 === "string" ? args.answers.q2 : "";
-  const priority = typeof args.answers?.q3 === "string" ? args.answers.q3 : "";
+  const paletteSelections = normalizeMultiSelect(args.answers?.q2);
+  const prioritySelections = normalizeMultiSelect(args.answers?.q3);
+  const palette = paletteSelections[0] ?? "";
+  const priority = prioritySelections[0] ?? "";
   const focus = typeof args.answers?.q4 === "string" ? args.answers.q4 : "";
 
   const tone =

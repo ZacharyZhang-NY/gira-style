@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -21,6 +21,10 @@ export function OutfitPreview({ state, image, feedback, onFeedback }: OutfitPrev
   const [imageReady, setImageReady] = React.useState(false);
   const showLoading = state === "loading";
   const hasImage = typeof image === "string" && image.length > 0;
+  const selectedEase: [number, number, number, number] = [0.16, 1, 0.3, 1];
+  const selectedTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : { duration: 0.2, ease: selectedEase };
 
   React.useEffect(() => {
     setImageReady(false);
@@ -69,36 +73,44 @@ export function OutfitPreview({ state, image, feedback, onFeedback }: OutfitPrev
 
       {hasImage ? (
         <div className="absolute bottom-4 right-4 flex items-center gap-2">
-          <button
+          <motion.button
             type="button"
             aria-label="Keep this look"
             aria-pressed={feedback === "up"}
             onClick={() => onFeedback("up")}
+            initial={false}
+            animate={feedback === "up" ? { scale: [1, 1.07, 1] } : { scale: 1 }}
+            whileTap={shouldReduceMotion ? undefined : { scale: 0.96 }}
+            transition={selectedTransition}
             className={cn(
               "relative grid h-10 w-10 place-items-center rounded-full text-text",
               "ui-glass-subtle",
               "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
               "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-              feedback === "up" && "bg-glass-highlight/30 shadow-lux-md",
+              feedback === "up" && "!bg-text !text-bg !bg-none shadow-lux-md",
             )}
           >
             <ThumbsUp className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             type="button"
             aria-label="Refine this look"
             aria-pressed={feedback === "down"}
             onClick={() => onFeedback("down")}
+            initial={false}
+            animate={feedback === "down" ? { scale: [1, 1.07, 1] } : { scale: 1 }}
+            whileTap={shouldReduceMotion ? undefined : { scale: 0.96 }}
+            transition={selectedTransition}
             className={cn(
               "relative grid h-10 w-10 place-items-center rounded-full text-text",
               "ui-glass-subtle",
               "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
               "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-              feedback === "down" && "bg-glass-highlight/30 shadow-lux-md",
+              feedback === "down" && "!bg-text !text-bg !bg-none shadow-lux-md",
             )}
           >
             <ThumbsDown className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </motion.button>
         </div>
       ) : null}
     </div>

@@ -37,6 +37,7 @@ from api.constants import (
     IMG_GEN_MODEL,
     RECOMMENDATION_MODEL,
     RECOMMENDATION_PROMPT,
+    build_recommendation_prompt,
     FOLLOW_UP_PROMPT,
     IMAGE_GEN_PROMPT,
     FILE_SEARCH_STORE,
@@ -180,18 +181,19 @@ def upsert_session(session_id, preferences, system_prompt, user_agent, locale, t
 
 
 def upsert_turn(session_id, turn_index, user_message, assistant_response,
-                image_key, image_url, video_key, video_url):
+                feedback, image_key, image_url, video_key, video_url):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO session_turns (
                     session_id, turn_index, user_message, assistant_response,
-                    image_key, image_url, video_key, video_url
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    feedback, image_key, image_url, video_key, video_url
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (session_id, turn_index) DO UPDATE SET
                     user_message = EXCLUDED.user_message,
                     assistant_response = EXCLUDED.assistant_response,
+                    feedback = COALESCE(EXCLUDED.feedback, session_turns.feedback),
                     image_key = COALESCE(EXCLUDED.image_key, session_turns.image_key),
                     image_url = COALESCE(EXCLUDED.image_url, session_turns.image_url),
                     video_key = COALESCE(EXCLUDED.video_key, session_turns.video_key),
@@ -202,12 +204,61 @@ def upsert_turn(session_id, turn_index, user_message, assistant_response,
                     turn_index,
                     user_message,
                     Json(assistant_response),
+                    feedback,
                     image_key,
                     image_url,
                     video_key,
                     video_url,
                 ),
             )
+
+def fetch_session_preferences(session_id):
+    if not session_id:
+        return None, None
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT preferences, system_prompt FROM sessions WHERE session_id = %s",
+                (session_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None, None
+            preferences, system_prompt = row[0], row[1]
+            if isinstance(preferences, str):
+                try:
+                    preferences = json.loads(preferences)
+                except json.JSONDecodeError:
+                    preferences = None
+            return preferences, system_prompt
+
+
+def fetch_session_turns(session_id):
+    if not session_id:
+        return []
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_message, assistant_response
+                FROM session_turns
+                WHERE session_id = %s
+                ORDER BY turn_index ASC
+                """,
+                (session_id,),
+            )
+            rows = cur.fetchall()
+    history = []
+    for user_message, assistant_response in rows:
+        response_payload = assistant_response
+        if isinstance(assistant_response, str):
+            try:
+                response_payload = json.loads(assistant_response)
+            except json.JSONDecodeError:
+                response_payload = assistant_response
+        history.append({"user": user_message, "assistant": response_payload})
+    return history
+
 
 @app.route('/')
 def serve_frontend():
@@ -264,6 +315,12 @@ def create_session_turn(session_id):
         if not isinstance(assistant_response, dict):
             return jsonify({'error': 'assistantResponse must be an object.'}), 400
 
+        feedback = data.get('feedback')
+        if feedback in ("", None):
+            feedback = None
+        elif feedback not in ("up", "down"):
+            return jsonify({'error': 'feedback must be "up" or "down".'}), 400
+
         image_key = None
         image_url = None
         image_data = data.get('imageData')
@@ -294,6 +351,7 @@ def create_session_turn(session_id):
             turn_index,
             user_message,
             assistant_response,
+            feedback,
             image_key,
             image_url,
             video_key,
@@ -303,6 +361,40 @@ def create_session_turn(session_id):
         return jsonify({'success': True})
     except Exception as e:
         logger.exception("Session turn logging error")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sessions/<session_id>/turns/<int:turn_index>/feedback', methods=['POST'])
+def update_session_feedback(session_id, turn_index):
+    if not DATABASE_URL:
+        return jsonify({'error': 'Database not configured.'}), 500
+    normalized_session_id = normalize_session_id(session_id)
+    if not normalized_session_id:
+        return jsonify({'error': 'Invalid session id.'}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+        feedback = data.get('feedback')
+        if feedback in ("", None):
+            feedback = None
+        elif feedback not in ("up", "down"):
+            return jsonify({'error': 'feedback must be "up" or "down".'}), 400
+
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE session_turns
+                    SET feedback = %s
+                    WHERE session_id = %s AND turn_index = %s
+                    """,
+                    (feedback, normalized_session_id, turn_index),
+                )
+                if cur.rowcount == 0:
+                    return jsonify({'error': 'Session turn not found.'}), 404
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.exception("Session feedback update error")
         return jsonify({'error': str(e)}), 500
 
 
@@ -451,17 +543,32 @@ def get_recommendation():
             return jsonify({'error': 'User input is required'}), 400
 
         # Determine if this is a follow-up request (has previous conversation)
+        session_preferences = None
+        session_system_prompt = ""
+        if session_id and DATABASE_URL:
+            try:
+                session_preferences, session_system_prompt = fetch_session_preferences(session_id)
+                stored_history = fetch_session_turns(session_id)
+                if stored_history and len(stored_history) >= len(conversation_history):
+                    conversation_history = stored_history
+            except Exception as e:
+                logger.warning(f"Failed to load session context: {e}")
+
         has_previous = len(conversation_history) > 0
         is_follow_up = has_previous and is_follow_up_request(user_input)
 
         logger.info(f"[File Search] Starting recommendation for: {user_input}")
 
-        system_instruction = RECOMMENDATION_PROMPT
+        system_instruction = build_recommendation_prompt(session_preferences)
+        if not session_preferences:
+            system_instruction = RECOMMENDATION_PROMPT
+        if session_system_prompt:
+            system_instruction = f"{system_instruction}\n\n{session_system_prompt}"
         if system_prompt:
-            system_instruction = f"{RECOMMENDATION_PROMPT}\n\n{system_prompt}"
+            system_instruction = f"{system_instruction}\n\n{system_prompt}"
 
         # Build the prompt with context
-        if is_follow_up:
+        if has_previous:
             # Format conversation history for context
             history_text = ""
             for i, exchange in enumerate(conversation_history, 1):
@@ -471,10 +578,20 @@ def get_recommendation():
                 history_text += f"User: {user_msg}\n"
                 history_text += f"Recommendation: {json.dumps(assistant_response, indent=2)}\n\n"
 
-            context_prompt = FOLLOW_UP_PROMPT.format(
-                conversation_history=history_text,
-                user_request=user_input
-            )
+            if is_follow_up:
+                context_prompt = FOLLOW_UP_PROMPT.format(
+                    conversation_history=history_text,
+                    user_request=user_input
+                )
+            else:
+                context_prompt = (
+                    "Here is the conversation history with previous outfit recommendations:\n\n"
+                    f"{history_text}"
+                    "Now the user says:\n"
+                    f"\"{user_input}\"\n\n"
+                    "Use the history as context for preferences and continuity, "
+                    "but treat this as a new request unless the user explicitly asks to modify a prior outfit."
+                )
         else:
             context_prompt = user_input
 
