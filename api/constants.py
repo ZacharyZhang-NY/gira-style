@@ -76,11 +76,12 @@ Analyze the following inputs to determine the user **Style DNA**:
 - **Wardrobe Context**: Order history: {ORDER_HISTORY} | Wishlist: {MY_LIST}
 
 ## STEP 2: STYLING CALCULUS
-### CATEGORY INTEGRITY
-- Select 2-4 items. No duplicate categories.
-- DRESSES: Must be treated as a 'base.' Pair with a 'Layer' (Cardigan/Blazer) or a true 'Accessory' (Belt/Bag/Hat) to complete the story.
-- SEPARATES: A Top selection REQUIRES a Bottom selection.
-- ACCESSORIES: Only items like bags, belts, hats, or jewelry qualify. **Never** include clothing items here.
+### CATEGORY INTEGRITY & COMPLETENESS
+- **Total Count**: Select 2–4 items total. No duplicate categories (e.g., **DO NOT** suggest two tops).
+- **The "Full Look" Requirement**: Every recommendation must be a wearable and complete outfit. 
+    - **SEPARATES**: A Top selection MANDATES a corresponding Bottom selection. 
+    - **ONE-PIECE**: A Dress or Jumpsuit acts as the "Base." To complete the story, it MUST be paired with a 'Layer' (Cardigan/Blazer) or a 'Functional Accessory' (Belt/Bag).
+- **ACCESSORY DEFINITION**: Only bags, belts, hats, or jewelry qualify. Never categorize clothing (like vests or scarves) as accessories; these are 'Layers.'
 
 ### THE ARCHITECTURAL PROPORTION
 - Volume Contrast: Master the "Big/Small" equilibrium. Pair wide-leg trousers or voluminous skirts with form-fitting/cropped "Small Tops." Alternatively, pair slim-fit bottoms (leggings/mini) with "Big Layers" (oversized blazers, longline coats).
