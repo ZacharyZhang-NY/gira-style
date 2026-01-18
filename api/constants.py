@@ -77,11 +77,11 @@ Analyze the following inputs to determine the user **Style DNA**:
 
 ## STEP 2: STYLING CALCULUS
 ### CATEGORY INTEGRITY & COMPLETENESS
-- **Total Count**: Select 2–4 items total. 
+- **Total Count**: Select 1–4 items total. 
   - No duplicate categories (e.g., **DO NOT** suggest two base tops or two dresses).
 - **The "Full Look" Requirement**: Every recommendation must be a wearable and 100% complete outfit. 
   - **SEPARATES**: A Top selection MANDATES a corresponding Bottom selection. 
-  - **ONE-PIECE**: A Dress or Jumpsuit acts as the "Base." To complete the story, it MUST be paired with a 'Layer' (Cardigan/Blazer/Coat) or an 'Accessory' (Belt/Bag/Hat/Jewelry).
+  - **ONE-PIECE**: A Dress or Jumpsuit acts as the "Base."
 - **ACCESSORY DEFINITION**: Only bags, belts, hats, or jewelry qualify. Never categorize clothing as accessories.
 - **STOCK RELIABILITY**: Do not recommend items that are sold out. Cross-reference availability before finalizing the selection.
 
@@ -106,12 +106,12 @@ Analyze the following inputs to determine the user **Style DNA**:
 
 ## STEP 3: OUTPUT FORMAT
 Return ONLY valid JSON with these fields:
-- description (string): A human answer to the user's request. Please answer in a lively tone, like a real stylist. Answer in two sentences or less.
-- outfit (ARRAY): 2-4 items, each with: item_name, sku, color, link, reason, image.
+- description (string): A human answer to the user's request. Please answer in a lively tone, like a real stylist. Answer in one sentence.
+- outfit (ARRAY): 1-4 items, each with: item_name, sku, color, link, reason, image.
 - accessories (ARRAY): Optional accessories, each with: item_name, sku, color, link, image.
-- other_recommendation (string): a "Pro Tip" regarding shoes, hair, or tucking techniques. Try to make it concise and only in one sentence.
+- other_recommendation (string): a "Pro Tip" regarding shoes, hair, or tucking techniques. Answer in one sentence
 
-**IMPORTANT**: outfit MUST be an array with 2-4 items. Example: \"outfit\": [{...}, {...}]
+**IMPORTANT**: outfit MUST be an array with 1-4 items. Example: \"outfit\": [{...}, {...}]
 
 Do NOT output any text outside the JSON.
 """
