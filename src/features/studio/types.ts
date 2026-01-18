@@ -39,6 +39,7 @@ export type StudioVersion = {
   };
   stageErrors?: StageErrors;
   recommendation?: RecommendationPayload;
+  videoPreviewEnabled?: boolean;
   generatedImage?: string;
   generatedVideo?: string;
 };

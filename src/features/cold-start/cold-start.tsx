@@ -29,7 +29,10 @@ type StoredColdStart = {
 
 function normalizeMultiSelect(value: unknown) {
   if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return value.filter(
+      (item): item is string =>
+        typeof item === "string" && item.trim().length > 0,
+    );
   }
   if (typeof value === "string" && value.trim()) return [value.trim()];
   return [];
@@ -38,7 +41,10 @@ function normalizeMultiSelect(value: unknown) {
 function normalizeSingleSelect(value: unknown) {
   if (typeof value === "string") return value.trim();
   if (Array.isArray(value)) {
-    const first = value.find((item): item is string => typeof item === "string" && item.trim().length > 0);
+    const first = value.find(
+      (item): item is string =>
+        typeof item === "string" && item.trim().length > 0,
+    );
     return first?.trim() ?? "";
   }
   return "";
@@ -54,13 +60,16 @@ function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
     styleNote?: unknown;
   };
   const q4Candidate = normalizeSingleSelect(candidate.q4);
-  const styleNoteCandidate = typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
+  const styleNoteCandidate =
+    typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
   return {
     q1: normalizeMultiSelect(candidate.q1),
     q2: normalizeMultiSelect(candidate.q2),
     q3: normalizeMultiSelect(candidate.q3),
     q4: isColdStartQ4Option(q4Candidate) ? q4Candidate : "",
-    styleNote: styleNoteCandidate || (!isColdStartQ4Option(q4Candidate) ? q4Candidate : ""),
+    styleNote:
+      styleNoteCandidate ||
+      (!isColdStartQ4Option(q4Candidate) ? q4Candidate : ""),
   };
 }
 
@@ -76,18 +85,25 @@ export function ColdStart() {
   const shouldReduceMotion = useReducedMotion();
   const transition = luxTween(shouldReduceMotion);
 
-  const [answers, setAnswers] = React.useState<ColdStartAnswers>(EMPTY_COLD_START_ANSWERS);
+  const [answers, setAnswers] = React.useState<ColdStartAnswers>(
+    EMPTY_COLD_START_ANSWERS,
+  );
   const [stepIndex, setStepIndex] = React.useState(0);
   const [styleText, setStyleText] = React.useState("");
   const [error, setError] = React.useState("");
   const [isSaving, setIsSaving] = React.useState(false);
 
   React.useEffect(() => {
-    const stored = readLocalStorageJson<StoredColdStart>(STORAGE_KEYS.coldStart);
+    const stored = readLocalStorageJson<StoredColdStart>(
+      STORAGE_KEYS.coldStart,
+    );
     if (!stored?.answers) return;
     const normalized = normalizeColdStartAnswers(stored.answers);
     const hasRequired = Boolean(
-      normalized.q1.length && normalized.q2.length && normalized.q3.length && normalized.q4.trim(),
+      normalized.q1.length &&
+      normalized.q2.length &&
+      normalized.q3.length &&
+      normalized.q4.trim(),
     );
     if (!hasRequired) return;
     router.replace("/studio");
@@ -101,7 +117,8 @@ export function ColdStart() {
   const selectedValues = React.useMemo(() => {
     if (!question) return [];
     if (Array.isArray(answerValue)) return answerValue;
-    if (typeof answerValue === "string" && answerValue.trim()) return [answerValue];
+    if (typeof answerValue === "string" && answerValue.trim())
+      return [answerValue];
     return [];
   }, [answerValue, question]);
   const currentStep = Math.min(stepIndex + 1, totalSteps);
@@ -122,7 +139,9 @@ export function ColdStart() {
 
     setAnswers((prev) => {
       const current = prev[question.id];
-      const currentValues = Array.isArray(current) ? current : normalizeMultiSelect(current);
+      const currentValues = Array.isArray(current)
+        ? current
+        : normalizeMultiSelect(current);
       const nextValues = currentValues.includes(nextValue)
         ? currentValues.filter((value) => value !== nextValue)
         : [...currentValues, nextValue];
@@ -173,7 +192,7 @@ export function ColdStart() {
         timezone,
       });
       router.push("/studio");
-    } catch (err) {
+    } catch {
       setError("We couldn't save your preferences yet. Please try again.");
     } finally {
       setIsSaving(false);
@@ -186,7 +205,9 @@ export function ColdStart() {
         <div className="mx-auto max-w-6xl px-6 pt-5">
           <div className="flex items-center justify-between gap-4 rounded-full px-4 py-3 ui-glass-liquid">
             <Link href="/" className="flex items-baseline gap-2">
-              <span className="font-display text-lg leading-none tracking-tight text-text">GiraStyle</span>
+              <span className="font-display text-lg leading-none tracking-tight text-text">
+                GiraStyle
+              </span>
               <span className="hidden text-[11px] font-semibold uppercase tracking-[0.22em] text-muted sm:inline">
                 Start
               </span>
@@ -203,7 +224,8 @@ export function ColdStart() {
             <div className="lg:sticky lg:top-28">
               <div className="sr-only">Quick setup</div>
               <h1 className="mt-4 font-display text-4xl leading-[1.05] tracking-tight text-text sm:text-5xl">
-                Let&apos;s find your <span className="italic">quiet confidence</span>.
+                Let&apos;s find your{" "}
+                <span className="italic">quiet confidence</span>.
               </h1>
               <p className="mt-5 max-w-[38ch] text-sm leading-relaxed text-muted">
                 {isStyleStep
@@ -218,7 +240,11 @@ export function ColdStart() {
                     {currentStep} / {totalSteps}
                   </div>
                 </div>
-                <div className="mt-4 h-2 w-full rounded-full bg-glass-highlight/20" role="progressbar" aria-label="Quiz progress">
+                <div
+                  className="mt-4 h-2 w-full rounded-full bg-glass-highlight/20"
+                  role="progressbar"
+                  aria-label="Quiz progress"
+                >
                   <div
                     className="h-2 rounded-full bg-gold transition-[width] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
                     style={{ width: `${(currentStep / totalSteps) * 100}%` }}
@@ -233,21 +259,31 @@ export function ColdStart() {
               <AnimatePresence mode="wait">
                 <motion.section
                   key={isStyleStep ? "style" : question?.id}
-                  initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 18 }}
+                  initial={
+                    shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 18 }
+                  }
                   animate={{ opacity: 1, y: 0 }}
-                  exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -12 }}
+                  exit={
+                    shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -12 }
+                  }
                   transition={transition}
                 >
                   <div className="flex flex-wrap items-end justify-between gap-6">
                     <div className="max-w-[60ch]">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted">
-                        {isStyleStep ? "Your style" : `Question ${stepIndex + 1}`}
+                        {isStyleStep
+                          ? "Your style"
+                          : `Question ${stepIndex + 1}`}
                       </div>
                       <h2 className="mt-3 font-display text-2xl leading-[1.15] tracking-tight text-text sm:text-3xl">
-                        {isStyleStep ? "Describe your style in one sentence." : question?.title}
+                        {isStyleStep
+                          ? "Describe your style in one sentence."
+                          : question?.title}
                       </h2>
                       <p className="mt-3 text-sm leading-relaxed text-muted">
-                        {isStyleStep ? "Optional. You can skip this and start chatting right away." : question?.hint}
+                        {isStyleStep
+                          ? "Optional. You can skip this and start chatting right away."
+                          : question?.hint}
                       </p>
                     </div>
                   </div>
@@ -258,7 +294,8 @@ export function ColdStart() {
                         htmlFor="styleText"
                         className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted"
                       >
-                        Style note <span className="text-muted">(optional)</span>
+                        Style note{" "}
+                        <span className="text-muted">(optional)</span>
                       </label>
                       <Textarea
                         id="styleText"
@@ -274,59 +311,76 @@ export function ColdStart() {
                     </div>
                   ) : (
                     <div className="mt-8 grid gap-4">
-                  {question ? question.options.map((opt) => {
-                        const isSelected = selectedValues.includes(opt.value);
-                        const isQ2 = question.id === "q2";
-                        const showSubtitle = isQ2;
-                        let subtitle = opt.description;
-                        if (isQ2) {
-                          const [beforeAgent] = opt.description.split(/Agent mode:/i);
-                          subtitle = beforeAgent.trim();
-                        }
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            onClick={() => toggleAnswer(opt.value)}
-                            className={cn(
-                              "group relative flex w-full cursor-pointer items-start justify-between gap-6 rounded-2xl p-6 text-left",
-                              "ui-glass-subtle",
-                              "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                              "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
-                              isSelected && "shadow-lux-md",
-                            )}
-                          >
-                            <div className="min-w-0">
-                              <div className="font-display text-2xl leading-tight tracking-tight text-text">{opt.title}</div>
-                              {showSubtitle && subtitle ? (
-                                <div className="mt-2 text-sm leading-relaxed text-muted">{subtitle}</div>
-                              ) : null}
-                            </div>
-
-                            <div className="mt-1 flex items-center gap-4">
-                              <span
+                      {question
+                        ? question.options.map((opt) => {
+                            const isSelected = selectedValues.includes(
+                              opt.value,
+                            );
+                            const isQ2 = question.id === "q2";
+                            const showSubtitle = isQ2;
+                            let subtitle = opt.description;
+                            if (isQ2) {
+                              const [beforeAgent] =
+                                opt.description.split(/Agent mode:/i);
+                              subtitle = beforeAgent.trim();
+                            }
+                            return (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => toggleAnswer(opt.value)}
                                 className={cn(
-                                  "h-3.5 w-3.5 border transition-colors duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                                  question?.multi ? "rounded-sm" : "rounded-full",
-                                  isSelected
-                                    ? "border-gold bg-gold"
-                                    : "border-glass-border/45 bg-glass-highlight/15 group-hover:border-glass-border/70",
+                                  "group relative flex w-full cursor-pointer items-start justify-between gap-6 rounded-2xl p-6 text-left",
+                                  "ui-glass-subtle",
+                                  "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                  "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
+                                  isSelected && "shadow-lux-md",
                                 )}
-                                aria-hidden="true"
-                              />
-                            </div>
-                          </button>
-                        );
-                      }) : null}
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-display text-2xl leading-tight tracking-tight text-text">
+                                    {opt.title}
+                                  </div>
+                                  {showSubtitle && subtitle ? (
+                                    <div className="mt-2 text-sm leading-relaxed text-muted">
+                                      {subtitle}
+                                    </div>
+                                  ) : null}
+                                </div>
+
+                                <div className="mt-1 flex items-center gap-4">
+                                  <span
+                                    className={cn(
+                                      "h-3.5 w-3.5 border transition-colors duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                      question?.multi
+                                        ? "rounded-sm"
+                                        : "rounded-full",
+                                      isSelected
+                                        ? "border-gold bg-gold"
+                                        : "border-glass-border/45 bg-glass-highlight/15 group-hover:border-glass-border/70",
+                                    )}
+                                    aria-hidden="true"
+                                  />
+                                </div>
+                              </button>
+                            );
+                          })
+                        : null}
                     </div>
                   )}
 
                   {error ? (
-                    <p role="alert" className="mt-6 text-sm text-text">{error}</p>
+                    <p role="alert" className="mt-6 text-sm text-text">
+                      {error}
+                    </p>
                   ) : null}
 
                   <div className="mt-8 flex items-center justify-between gap-3">
-                    <Button tone="ghost" onClick={goBack} disabled={stepIndex === 0}>
+                    <Button
+                      tone="ghost"
+                      onClick={goBack}
+                      disabled={stepIndex === 0}
+                    >
                       Back
                     </Button>
 
