@@ -14,7 +14,7 @@ import { VideoToggle } from "./video-toggle";
 type ChatMessage = {
   id: string;
   role: "assistant" | "user";
-  heading: string;
+  heading?: string;
   meta?: string;
   text: string;
   highlight?: boolean;
@@ -117,13 +117,16 @@ export function ChatPanel({
   const [error, setError] = React.useState("");
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
 
-  const scrollToBottom = React.useCallback((behavior: ScrollBehavior = "auto") => {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior,
-    });
-  }, []);
+  const scrollToBottom = React.useCallback(
+    (behavior: ScrollBehavior = "auto") => {
+      if (!scrollRef.current) return;
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior,
+      });
+    },
+    [],
+  );
 
   React.useEffect(() => {
     requestAnimationFrame(() => scrollToBottom("smooth"));
@@ -157,15 +160,18 @@ export function ChatPanel({
         <AnimatePresence initial={false}>
           <div className="flex flex-col gap-3">
             {messages.map((msg) => {
-              const outputKey = msg.role === "assistant" && msg.id.endsWith("-assistant")
-                ? msg.id.replace(/-assistant$/, "")
-                : null;
+              const outputKey =
+                msg.role === "assistant" && msg.id.endsWith("-assistant")
+                  ? msg.id.replace(/-assistant$/, "")
+                  : null;
               const output = outputKey ? mobileOutputs?.[outputKey] : null;
 
               return (
                 <div key={msg.id} className="flex flex-col">
                   <ChatBubble msg={msg} />
-                  {output ? <div className="mt-4 lg:hidden">{output}</div> : null}
+                  {output ? (
+                    <div className="mt-4 lg:hidden">{output}</div>
+                  ) : null}
                 </div>
               );
             })}
@@ -187,7 +193,11 @@ export function ChatPanel({
                 {videoEnabled ? "On" : "Off"}
               </span>
             </div>
-            <VideoToggle enabled={videoEnabled} disabled={disableVideoToggle} onToggle={onToggleVideo} />
+            <VideoToggle
+              enabled={videoEnabled}
+              disabled={disableVideoToggle}
+              onToggle={onToggleVideo}
+            />
           </div>
           <div className="flex items-end gap-4">
             <label htmlFor="refineInput" className="sr-only">
@@ -201,7 +211,11 @@ export function ChatPanel({
                 setError("");
               }}
               onKeyDown={(e) => {
-                if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) {
+                if (
+                  e.key !== "Enter" ||
+                  e.shiftKey ||
+                  e.nativeEvent.isComposing
+                ) {
                   return;
                 }
                 e.preventDefault();
@@ -241,9 +255,13 @@ export function ChatPanel({
             {error ? (
               <motion.p
                 role="alert"
-                initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -4 }}
+                initial={
+                  shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -4 }
+                }
                 animate={{ opacity: 1, y: 0 }}
-                exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -4 }}
+                exit={
+                  shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -4 }
+                }
                 transition={luxTween(shouldReduceMotion, 0.35)}
                 className="text-sm text-text"
               >

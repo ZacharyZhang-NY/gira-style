@@ -77,38 +77,8 @@ export default function Novatrix({
     const renderer = new Renderer();
     const gl = renderer.gl;
     gl.clearColor(1, 1, 1, 1);
-
-    let program: Program;
-    let mesh: Mesh | null = null;
-
-    const frameTime = Number.isFinite(time) ? time : 0;
-
-    function renderFrame(value: number) {
-      if (!mesh) return;
-      program.uniforms.uTime.value = value;
-      renderer.render({ scene: mesh });
-    }
-
-    function resize() {
-      const scale = 1;
-      renderer.setSize(ctn.offsetWidth * scale, ctn.offsetHeight * scale);
-      if (program) {
-        program.uniforms.uResolution.value = new Color(
-          gl.canvas.width,
-          gl.canvas.height,
-          gl.canvas.width / gl.canvas.height,
-        );
-        if (paused) {
-          renderFrame(frameTime);
-        }
-      }
-    }
-
-    window.addEventListener("resize", resize, false);
-    resize();
-
     const geometry = new Triangle(gl);
-    program = new Program(gl, {
+    const program = new Program(gl, {
       vertex: vertexShader,
       fragment: fragmentShader,
       uniforms: {
@@ -128,8 +98,30 @@ export default function Novatrix({
         uSpeed: { value: speed },
       },
     });
+    const mesh = new Mesh(gl, { geometry, program });
 
-    mesh = new Mesh(gl, { geometry, program });
+    const frameTime = Number.isFinite(time) ? time : 0;
+
+    function renderFrame(value: number) {
+      program.uniforms.uTime.value = value;
+      renderer.render({ scene: mesh });
+    }
+
+    function resize() {
+      const scale = 1;
+      renderer.setSize(ctn.offsetWidth * scale, ctn.offsetHeight * scale);
+      program.uniforms.uResolution.value = new Color(
+        gl.canvas.width,
+        gl.canvas.height,
+        gl.canvas.width / gl.canvas.height,
+      );
+      if (paused) {
+        renderFrame(frameTime);
+      }
+    }
+
+    window.addEventListener("resize", resize, false);
+    resize();
     let animateId = 0;
 
     function update(rafTime: number) {
@@ -171,5 +163,7 @@ export default function Novatrix({
     };
   }, [color, speed, amplitude, mouseReact, paused, time]);
 
-  return <div ref={ctnDom} className={cn("h-full w-full", className)} {...rest} />;
+  return (
+    <div ref={ctnDom} className={cn("h-full w-full", className)} {...rest} />
+  );
 }
