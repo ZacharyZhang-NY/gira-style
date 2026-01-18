@@ -111,7 +111,7 @@ Return ONLY valid JSON with these fields:
 - accessories (ARRAY): Optional accessories, each with: item_name, sku, color, link, image.
 - other_recommendation (string): a "Pro Tip" regarding shoes, hair, or tucking techniques. Answer in one sentence
 
-**IMPORTANT**: outfit MUST be an array with 2-4 items. Example: \"outfit\": [{...}, {...}]
+**IMPORTANT**: outfit MUST be an array with 1-4 items. Example: \"outfit\": [{...}, {...}]
 
 Do NOT output any text outside the JSON.
 """
