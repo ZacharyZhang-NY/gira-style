@@ -147,6 +147,7 @@ export function ChatPanel({
     e.preventDefault();
     handleSubmit();
   }
+
   return (
     <Surface
       tone="flush"

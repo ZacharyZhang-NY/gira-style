@@ -132,6 +132,11 @@ export function ColdStart() {
   const [error, setError] = React.useState("");
   const [isSaving, setIsSaving] = React.useState(false);
   const [isDetectingZip, setIsDetectingZip] = React.useState(false);
+  const stepIndexRef = React.useRef(stepIndex);
+
+  React.useEffect(() => {
+    stepIndexRef.current = stepIndex;
+  }, [stepIndex]);
 
   React.useEffect(() => {
     const stored = readLocalStorageJson<StoredColdStart>(
@@ -155,6 +160,7 @@ export function ColdStart() {
   const totalSteps = totalQuestions + 2;
   const isZipStep = stepIndex === zipStepIndex;
   const isStyleStep = stepIndex === styleStepIndex;
+  const hasZipCode = Boolean(answers.zipCode.trim());
   const question =
     isZipStep || isStyleStep ? null : COLD_START_QUESTIONS[stepIndex];
   const answerValue = question ? answers[question.id] : null;
@@ -361,8 +367,12 @@ export function ColdStart() {
                         htmlFor="zipCode"
                         className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted"
                       >
-                        Zip code
+                        Zip code <span className="text-muted">(optional)</span>
                       </label>
+                      <p className="text-sm leading-relaxed text-muted">
+                        Used only to tailor fabrics and layering to your local
+                        weather.
+                      </p>
                       <Textarea
                         id="zipCode"
                         value={answers.zipCode}
@@ -429,6 +439,10 @@ export function ColdStart() {
                                   : "";
                               if (!postcode) {
                                 throw new Error("We couldn’t detect a zip code for this location.");
+                              }
+
+                              if (stepIndexRef.current !== zipStepIndex) {
+                                return;
                               }
 
                               setAnswers((prev) => ({
@@ -536,7 +550,9 @@ export function ColdStart() {
                         Start chatting
                       </Button>
                     ) : (
-                      <Button onClick={goNext}>Next</Button>
+                      <Button onClick={goNext}>
+                        {isZipStep && !hasZipCode ? "Skip" : "Next"}
+                      </Button>
                     )}
                   </div>
                 </motion.section>

@@ -162,6 +162,35 @@ def parse_data_url(data_url: str):
     return mime_type, base64.b64decode(encoded)
 
 
+def clean_jsonish_text(raw_text: str):
+    if not raw_text or not isinstance(raw_text, str):
+        return ""
+    cleaned = raw_text.strip()
+    while "tool_code" in cleaned:
+        cleaned = cleaned.replace("tool_code", "").strip()
+
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        first_newline = cleaned.find("\n")
+        if first_newline != -1:
+            cleaned = cleaned[first_newline + 1:]
+        else:
+            cleaned = cleaned[3:]
+
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+
+    cleaned = cleaned.strip()
+
+    json_start = cleaned.find("{")
+    json_end = cleaned.rfind("}")
+    if json_start != -1 and json_end != -1 and json_end > json_start:
+        cleaned = cleaned[json_start:json_end + 1]
+
+    return cleaned.strip()
+
+
 def upload_to_r2(object_key: str, data: bytes, mime_type: str):
     client = get_r2_client()
     client.put_object(
@@ -948,31 +977,6 @@ def get_recommendation():
             )
         )
 
-        def clean_response_text(raw_text):
-            cleaned = raw_text.strip()
-
-            while 'tool_code' in cleaned:
-                cleaned = cleaned.replace('tool_code', '').strip()
-
-            if cleaned.startswith('```json'):
-                cleaned = cleaned[7:]
-            elif cleaned.startswith('```'):
-                first_newline = cleaned.find('\n')
-                if first_newline != -1:
-                    cleaned = cleaned[first_newline + 1:]
-                else:
-                    cleaned = cleaned[3:]
-            if cleaned.endswith('```'):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-
-            json_start = cleaned.find('{')
-            json_end = cleaned.rfind('}')
-            if json_start != -1 and json_end != -1:
-                cleaned = cleaned[json_start:json_end + 1]
-
-            return cleaned
-
         def stream_recommendation():
             full_text = ""
             try:
@@ -987,6 +991,7 @@ def get_recommendation():
                             system_instruction=system_instruction,
                             tools=[file_search_tool],
                             temperature=1.0,  # Gemini 3 is optimized for 1.0
+                            response_mime_type="application/json",
                             thinking_config=types.ThinkingConfig(
                                 include_thoughts=False,
                                 thinking_level="MINIMAL"  # Use "MINIMAL" or "LOW" for speed
@@ -1005,7 +1010,7 @@ def get_recommendation():
                     full_text += chunk_text
                     yield chunk_text
 
-                cleaned_text = clean_response_text(full_text)
+                cleaned_text = clean_jsonish_text(full_text)
                 try:
                     outfit_data = json.loads(cleaned_text)
                     outfit_count = len(outfit_data.get('outfit', []))
