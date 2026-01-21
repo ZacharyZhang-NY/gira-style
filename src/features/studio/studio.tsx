@@ -48,6 +48,8 @@ const EMPTY_STUDIO_STATE: StudioState = {
   selectedIndex: 0,
   updatedAt: "",
 };
+const GENERIC_API_ERROR_MESSAGE =
+  "Gira is a bit busy right now due to high demand. Please wait a moment and try again!";
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -101,17 +103,56 @@ function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
     q2?: unknown;
     q3?: unknown;
     q4?: unknown;
+    zipCode?: unknown;
+    zip_code?: unknown;
+    location?: unknown;
     styleNote?: unknown;
   };
   const q4Candidate = normalizeSingleSelect(candidate.q4);
   const q4IsOption = isColdStartQ4Option(q4Candidate);
   const styleNoteCandidate =
     typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
+  const zipCandidateRaw =
+    typeof candidate.zipCode === "string"
+      ? candidate.zipCode
+      : typeof candidate.zip_code === "string"
+        ? candidate.zip_code
+        : "";
+  const zipCodeCandidate = zipCandidateRaw.trim();
+
+  const locationCandidate =
+    candidate.location && typeof candidate.location === "object"
+      ? (candidate.location as {
+          latitude?: unknown;
+          longitude?: unknown;
+          source?: unknown;
+        })
+      : null;
+  const latitudeCandidate =
+    locationCandidate && typeof locationCandidate.latitude === "number"
+      ? locationCandidate.latitude
+      : undefined;
+  const longitudeCandidate =
+    locationCandidate && typeof locationCandidate.longitude === "number"
+      ? locationCandidate.longitude
+      : undefined;
+  const sourceRaw =
+    locationCandidate && typeof locationCandidate.source === "string"
+      ? locationCandidate.source
+      : "";
+  const sourceCandidate =
+    sourceRaw === "geolocation" || sourceRaw === "manual" ? sourceRaw : undefined;
   return {
     q1: normalizeMultiSelect(candidate.q1),
     q2: normalizeMultiSelect(candidate.q2),
     q3: normalizeMultiSelect(candidate.q3),
     q4: q4IsOption ? q4Candidate : "",
+    zipCode: zipCodeCandidate,
+    location: {
+      latitude: latitudeCandidate,
+      longitude: longitudeCandidate,
+      source: sourceCandidate,
+    },
     styleNote: styleNoteCandidate || (!q4IsOption ? q4Candidate : ""),
   };
 }
@@ -640,20 +681,66 @@ export function Studio() {
       const responseText = formattedResponse
         ? formattedResponse
         : [description, reason].filter(Boolean).join("\n\n");
-      const baseText =
-        v.stages.a === "loading"
-          ? "Give me a moment—I’m pulling pieces that match your vibe."
-          : responseText || "I’m ready when you are.";
 
-      const errorNotes = [
-        v.stageErrors?.a ? `Recommendation issue: ${v.stageErrors.a}` : "",
-        v.stageErrors?.b ? `Image generation issue: ${v.stageErrors.b}` : "",
-        v.stageErrors?.c ? `Video preview issue: ${v.stageErrors.c}` : "",
-      ].filter(Boolean);
+      const nonInterruptErrorStages = (["a", "b", "c"] as const).filter(
+        (stage) => {
+          const message = v.stageErrors?.[stage];
+          if (!message) return false;
+          return !message.toLowerCase().includes("interrupted");
+        },
+      );
+      const hasNonInterruptRecommendationError = nonInterruptErrorStages.includes("a");
+      const hasNonInterruptMediaError =
+        nonInterruptErrorStages.includes("b") || nonInterruptErrorStages.includes("c");
 
-      const assistantText = errorNotes.length
-        ? `${baseText}\n\n${errorNotes.join("\n")}`
-        : baseText;
+      const assistantMessages: Array<{
+        id: string;
+        role: "assistant";
+        heading?: string;
+        text: string;
+        highlight?: boolean;
+      }> = [];
+
+      assistantMessages.push({
+        id: `${v.id}-assistant-loading`,
+        role: "assistant",
+        heading: "",
+        text: "Give me a moment—I’m pulling pieces that match your vibe.",
+      });
+
+      if (v.stages.a === "done") {
+        assistantMessages.push({
+          id: `${v.id}-assistant`,
+          role: "assistant",
+          heading: "",
+          text: responseText || "I’m ready when you are.",
+        });
+      } else if (v.stages.a === "error" && hasNonInterruptRecommendationError) {
+        assistantMessages.push({
+          id: `${v.id}-assistant`,
+          role: "assistant",
+          heading: "",
+          text: GENERIC_API_ERROR_MESSAGE,
+        });
+      }
+
+      if (hasNonInterruptMediaError) {
+        assistantMessages.push({
+          id: `${v.id}-assistant-media-error`,
+          role: "assistant",
+          heading: "",
+          text: GENERIC_API_ERROR_MESSAGE,
+        });
+      }
+
+      const activeAssistantId = assistantMessages.length
+        ? assistantMessages[assistantMessages.length - 1]?.id
+        : null;
+
+      const highlightedAssistantMessages = assistantMessages.map((msg) => ({
+        ...msg,
+        highlight: isSelected && msg.id === activeAssistantId,
+      }));
 
       return [
         {
@@ -662,13 +749,7 @@ export function Studio() {
           text: v.request,
           highlight: isSelected,
         },
-        {
-          id: `${v.id}-assistant`,
-          role: "assistant" as const,
-          heading: "",
-          text: assistantText,
-          highlight: isSelected,
-        },
+        ...highlightedAssistantMessages,
       ];
     });
 
@@ -690,9 +771,6 @@ export function Studio() {
             <Link href="/" className="flex items-baseline gap-2">
               <span className="font-display text-lg leading-none tracking-tight text-text">
                 GiraStyle
-              </span>
-              <span className="hidden text-[11px] font-semibold uppercase tracking-[0.22em] text-muted sm:inline">
-                Studio
               </span>
             </Link>
 

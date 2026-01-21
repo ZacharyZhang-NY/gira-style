@@ -3,6 +3,8 @@
 import type { ColdStartAnswers } from "@/features/cold-start/questions";
 import type { RecommendationItem, RecommendationPayload } from "./types";
 import { getItemImage } from "./item";
+import { readLocalStorageJson } from "@/lib/storage";
+import { STORAGE_KEYS } from "@/lib/storageKeys";
 
 type ConversationTurn = {
   user: string;
@@ -13,6 +15,18 @@ type RecommendationRequest = {
   requestText: string;
   conversationHistory: ConversationTurn[];
   sessionId?: string;
+};
+
+type ClientTimeContext = {
+  localDateTime: string;
+  timezone?: string;
+  locale?: string;
+};
+
+type ClientLocationContext = {
+  zipCode?: string;
+  latitude?: number;
+  longitude?: number;
 };
 
 type VideoResponse = {
@@ -58,6 +72,72 @@ type RequestOptions = {
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const DEFAULT_REMOTE_BACKEND_BASE_URL = "https://aritzia.girastyleai.com";
 const LOCAL_BACKEND_BASE_URL = "http://127.0.0.1:5001";
+
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function formatLocalDateTimeWithOffset(value: Date) {
+  const year = value.getFullYear();
+  const month = pad2(value.getMonth() + 1);
+  const day = pad2(value.getDate());
+  const hour = pad2(value.getHours());
+  const minute = pad2(value.getMinutes());
+  const second = pad2(value.getSeconds());
+
+  const offsetMinutes = -value.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMinutes);
+  const offsetHour = pad2(Math.floor(abs / 60));
+  const offsetMinute = pad2(abs % 60);
+
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}${sign}${offsetHour}:${offsetMinute}`;
+}
+
+function getClientTimeContext(): ClientTimeContext {
+  const now = new Date();
+  let timezone: string | undefined;
+  let locale: string | undefined;
+
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    timezone = undefined;
+  }
+
+  try {
+    locale = typeof navigator !== "undefined" ? navigator.language : undefined;
+  } catch {
+    locale = undefined;
+  }
+
+  return {
+    localDateTime: formatLocalDateTimeWithOffset(now),
+    timezone,
+    locale,
+  };
+}
+
+function getClientLocationContext(): ClientLocationContext | undefined {
+  if (typeof window === "undefined") return undefined;
+  const stored = readLocalStorageJson<{ answers?: Partial<ColdStartAnswers> }>(
+    STORAGE_KEYS.coldStart,
+  );
+  const answers = stored?.answers;
+  const zipCode = typeof answers?.zipCode === "string" ? answers.zipCode.trim() : "";
+  const latitude =
+    typeof answers?.location?.latitude === "number" ? answers.location.latitude : undefined;
+  const longitude =
+    typeof answers?.location?.longitude === "number" ? answers.location.longitude : undefined;
+
+  if (!zipCode && latitude == null && longitude == null) return undefined;
+
+  return {
+    zipCode: zipCode || undefined,
+    latitude,
+    longitude,
+  };
+}
 
 function stripTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
@@ -218,6 +298,8 @@ export async function fetchRecommendation(
       userInput: request.requestText,
       conversationHistory: request.conversationHistory,
       sessionId: request.sessionId,
+      clientTime: getClientTimeContext(),
+      clientLocation: getClientLocationContext(),
     }),
     signal: options.signal,
   });
@@ -257,7 +339,7 @@ export async function generateImage(outfitItems: RecommendationItem[], options: 
     normalizedItems.map(async (item) => {
       const image = getItemImage(item);
       const image_base64 = image ? await fetchImageAsBase64(image, options) : null;
-      return { item_name: item.item_name, image_base64 };
+      return { item_name: item.item_name, sku: item.sku, image_base64 };
     }),
   );
 

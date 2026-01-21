@@ -57,16 +57,55 @@ function normalizeColdStartAnswers(raw: unknown): ColdStartAnswers {
     q2?: unknown;
     q3?: unknown;
     q4?: unknown;
+    zipCode?: unknown;
+    zip_code?: unknown;
+    location?: unknown;
     styleNote?: unknown;
   };
   const q4Candidate = normalizeSingleSelect(candidate.q4);
   const styleNoteCandidate =
     typeof candidate.styleNote === "string" ? candidate.styleNote.trim() : "";
+  const zipCandidateRaw =
+    typeof candidate.zipCode === "string"
+      ? candidate.zipCode
+      : typeof candidate.zip_code === "string"
+        ? candidate.zip_code
+        : "";
+  const zipCodeCandidate = zipCandidateRaw.trim();
+
+  const locationCandidate =
+    candidate.location && typeof candidate.location === "object"
+      ? (candidate.location as {
+          latitude?: unknown;
+          longitude?: unknown;
+          source?: unknown;
+        })
+      : null;
+  const latitudeCandidate =
+    locationCandidate && typeof locationCandidate.latitude === "number"
+      ? locationCandidate.latitude
+      : undefined;
+  const longitudeCandidate =
+    locationCandidate && typeof locationCandidate.longitude === "number"
+      ? locationCandidate.longitude
+      : undefined;
+  const sourceRaw =
+    locationCandidate && typeof locationCandidate.source === "string"
+      ? locationCandidate.source
+      : "";
+  const sourceCandidate =
+    sourceRaw === "geolocation" || sourceRaw === "manual" ? sourceRaw : undefined;
   return {
     q1: normalizeMultiSelect(candidate.q1),
     q2: normalizeMultiSelect(candidate.q2),
     q3: normalizeMultiSelect(candidate.q3),
     q4: isColdStartQ4Option(q4Candidate) ? q4Candidate : "",
+    zipCode: zipCodeCandidate,
+    location: {
+      latitude: latitudeCandidate,
+      longitude: longitudeCandidate,
+      source: sourceCandidate,
+    },
     styleNote:
       styleNoteCandidate ||
       (!isColdStartQ4Option(q4Candidate) ? q4Candidate : ""),
@@ -92,6 +131,12 @@ export function ColdStart() {
   const [styleText, setStyleText] = React.useState("");
   const [error, setError] = React.useState("");
   const [isSaving, setIsSaving] = React.useState(false);
+  const [isDetectingZip, setIsDetectingZip] = React.useState(false);
+  const stepIndexRef = React.useRef(stepIndex);
+
+  React.useEffect(() => {
+    stepIndexRef.current = stepIndex;
+  }, [stepIndex]);
 
   React.useEffect(() => {
     const stored = readLocalStorageJson<StoredColdStart>(
@@ -109,10 +154,15 @@ export function ColdStart() {
     router.replace("/studio");
   }, [router]);
 
-  const total = COLD_START_QUESTIONS.length;
-  const totalSteps = total + 1;
-  const isStyleStep = stepIndex === total;
-  const question = isStyleStep ? null : COLD_START_QUESTIONS[stepIndex];
+  const totalQuestions = COLD_START_QUESTIONS.length;
+  const zipStepIndex = totalQuestions;
+  const styleStepIndex = totalQuestions + 1;
+  const totalSteps = totalQuestions + 2;
+  const isZipStep = stepIndex === zipStepIndex;
+  const isStyleStep = stepIndex === styleStepIndex;
+  const hasZipCode = Boolean(answers.zipCode.trim());
+  const question =
+    isZipStep || isStyleStep ? null : COLD_START_QUESTIONS[stepIndex];
   const answerValue = question ? answers[question.id] : null;
   const selectedValues = React.useMemo(() => {
     if (!question) return [];
@@ -156,12 +206,17 @@ export function ColdStart() {
 
   function goNext() {
     if (isStyleStep) return;
+    if (isZipStep) {
+      setError("");
+      setStepIndex((i) => Math.min(styleStepIndex, i + 1));
+      return;
+    }
     if (!selectedValues.length) {
       setError("Pick at least one option so I can tailor your first look.");
       return;
     }
     setError("");
-    setStepIndex((i) => Math.min(total, i + 1));
+    setStepIndex((i) => Math.min(styleStepIndex, i + 1));
   }
 
   async function finish() {
@@ -208,9 +263,6 @@ export function ColdStart() {
               <span className="font-display text-lg leading-none tracking-tight text-text">
                 GiraStyle
               </span>
-              <span className="hidden text-[11px] font-semibold uppercase tracking-[0.22em] text-muted sm:inline">
-                Start
-              </span>
             </Link>
 
             <ThemeToggle className="hidden sm:inline-flex" />
@@ -227,11 +279,6 @@ export function ColdStart() {
                 Let&apos;s find your{" "}
                 <span className="italic">quiet confidence</span>.
               </h1>
-              <p className="mt-5 max-w-[38ch] text-sm leading-relaxed text-muted">
-                {isStyleStep
-                  ? "Optional: one sentence that describes your style—so I can stay consistent."
-                  : "No pressure. Pick what feels right—then we’ll turn it into a look you can actually wear."}
-              </p>
 
               <Surface tone="subtle" className="mt-8 p-6" aria-live="polite">
                 <div className="flex items-end justify-between gap-6">
@@ -258,7 +305,13 @@ export function ColdStart() {
             <Surface className="p-8 sm:p-10">
               <AnimatePresence mode="wait">
                 <motion.section
-                  key={isStyleStep ? "style" : question?.id}
+                  key={
+                    isStyleStep
+                      ? "style"
+                      : isZipStep
+                        ? "zip"
+                        : question?.id
+                  }
                   initial={
                     shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 18 }
                   }
@@ -273,18 +326,17 @@ export function ColdStart() {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted">
                         {isStyleStep
                           ? "Your style"
-                          : `Question ${stepIndex + 1}`}
+                          : isZipStep
+                            ? "Your location"
+                            : `Question ${stepIndex + 1}`}
                       </div>
                       <h2 className="mt-3 font-display text-2xl leading-[1.15] tracking-tight text-text sm:text-3xl">
                         {isStyleStep
                           ? "Describe your style in one sentence."
+                          : isZipStep
+                            ? "What’s your zip code?"
                           : question?.title}
                       </h2>
-                      <p className="mt-3 text-sm leading-relaxed text-muted">
-                        {isStyleStep
-                          ? "Optional. You can skip this and start chatting right away."
-                          : question?.hint}
-                      </p>
                     </div>
                   </div>
 
@@ -308,6 +360,115 @@ export function ColdStart() {
                         placeholder="Minimal, modern, tailored. Neutral palette, clean lines, subtle edge."
                         className={cn(error && "border-gold")}
                       />
+                    </div>
+                  ) : isZipStep ? (
+                    <div className="mt-8 space-y-4">
+                      <label
+                        htmlFor="zipCode"
+                        className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted"
+                      >
+                        Zip code <span className="text-muted">(optional)</span>
+                      </label>
+                      <p className="text-sm leading-relaxed text-muted">
+                        Used only to tailor fabrics and layering to your local
+                        weather.
+                      </p>
+                      <Textarea
+                        id="zipCode"
+                        value={answers.zipCode}
+                        onChange={(e) => {
+                          const nextZip = e.target.value;
+                          setAnswers((prev) => ({
+                            ...prev,
+                            zipCode: nextZip,
+                            location: { source: "manual" },
+                          }));
+                          setError("");
+                        }}
+                        rows={1}
+                        placeholder="e.g. 90210"
+                        className={cn("h-12", error && "border-gold")}
+                      />
+                      <div className="flex flex-wrap gap-3">
+                        <Button
+                          type="button"
+                          tone="outline"
+                          onClick={async () => {
+                            if (isDetectingZip) return;
+                            if (
+                              typeof navigator === "undefined" ||
+                              !("geolocation" in navigator)
+                            ) {
+                              setError("Location isn’t available—type your zip code instead.");
+                              return;
+                            }
+                            setError("");
+                            setIsDetectingZip(true);
+                            try {
+                              const position = await new Promise<GeolocationPosition>(
+                                (resolve, reject) => {
+                                  navigator.geolocation.getCurrentPosition(
+                                    resolve,
+                                    reject,
+                                    {
+                                      enableHighAccuracy: false,
+                                      timeout: 10_000,
+                                      maximumAge: 60_000,
+                                    },
+                                  );
+                                },
+                              );
+
+                              const latitude = position.coords.latitude;
+                              const longitude = position.coords.longitude;
+
+                              const resp = await fetch(
+                                `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(
+                                  String(latitude),
+                                )}&longitude=${encodeURIComponent(
+                                  String(longitude),
+                                )}&localityLanguage=en`,
+                              );
+                              if (!resp.ok) {
+                                throw new Error("Unable to detect zip code.");
+                              }
+                              const payload = (await resp.json()) as { postcode?: unknown };
+                              const postcode =
+                                typeof payload.postcode === "string"
+                                  ? payload.postcode.trim()
+                                  : "";
+                              if (!postcode) {
+                                throw new Error("We couldn’t detect a zip code for this location.");
+                              }
+
+                              if (stepIndexRef.current !== zipStepIndex) {
+                                return;
+                              }
+
+                              setAnswers((prev) => ({
+                                ...prev,
+                                zipCode: postcode,
+                                location: {
+                                  latitude,
+                                  longitude,
+                                  source: "geolocation",
+                                },
+                              }));
+                            } catch (err) {
+                              const message =
+                                err instanceof Error && err.message
+                                  ? err.message
+                                  : "We couldn’t detect your zip code—type it in instead.";
+                              setError(message);
+                            } finally {
+                              setIsDetectingZip(false);
+                            }
+                          }}
+                          isLoading={isDetectingZip}
+                        >
+                          Use my location
+                        </Button>
+                      </div>
                     </div>
                   ) : (
                     <div className="mt-8 grid gap-4">
@@ -389,7 +550,9 @@ export function ColdStart() {
                         Start chatting
                       </Button>
                     ) : (
-                      <Button onClick={goNext}>Next</Button>
+                      <Button onClick={goNext}>
+                        {isZipStep && !hasZipCode ? "Skip" : "Next"}
+                      </Button>
                     )}
                   </div>
                 </motion.section>

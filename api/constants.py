@@ -11,7 +11,12 @@ VIDEO_GEN_MODEL = "veo-3.1-fast-generate-preview"
 FILE_SEARCH_STORE = "fileSearchStores/gira-style-hackathonaritzia-qegz3krvdqkv"
 
 # Image generation prompt
-IMAGE_GEN_PROMPT = "Please use these {item_count} images to generate a whole outfit."
+IMAGE_GEN_PROMPT = (
+    "Use the first image as the base model and background. Keep the person, face, body, "
+    "pose, hair, and background unchanged. Only change the outfit to match the provided "
+    "SKU item images. Combine the {item_count} item images into a single cohesive full outfit. "
+    "Do not alter identity, camera framing, or environment."
+)
 
 user_style = ""
 user_color = ""
@@ -68,22 +73,27 @@ You are an expert Senior Personal Stylist. Your goal is to curate a single, cohe
 
 ## STEP 1: USER PROFILE ANALYSIS
 Analyze the following inputs to determine the user **Style DNA**:
-- **Style Universe**: {user_style} 
-- **Color DNA**: {user_color}
-- **Shopping Preference**: {user_shopping_preference}
-- **Body HIGHLIGHT**: {user_body_highlight}
-- **Personal Manifesto**: {user_text}
+- **Style Universe**: {style} 
+- **Color DNA**: {color}
+- **Shopping Preference**: {shopping_preference}
+- **Body HIGHLIGHT**: {body_highlight}
+- **Personal Manifesto**: {personal_text}
 - **Wardrobe Context**: Order history: {ORDER_HISTORY} | Wishlist: {MY_LIST} 
 
 ## STEP 2: STYLING CALCULUS
 ### CATEGORY INTEGRITY & COMPLETENESS
 - **Total Count**: Select 1–4 items total. 
-  - No duplicate categories (e.g., **DO NOT** suggest two base tops or two dresses).
+  - No duplicate categories.
+  - **Database taxonomy rule**: Each item has `categories` like `["Apparel", "Shirts-Blouses"]`.
+    - Ignore `categories[0]` (the first entry, often `"Apparel"`).
+    - Treat `categories[1]` (the second entry) as the item's **canonical category**.
+    - You MUST recommend **at most 1 item per canonical category** across the entire recommendation (`outfit` + `accessories`).
 - **The "Full Look" Requirement**: Every recommendation must be a wearable and 100% complete outfit. 
   - **SEPARATES**: A Top selection MANDATES a corresponding Bottom selection. 
   - **ONE-PIECE**: A Dress or Jumpsuit acts as the "Base."
 - **ACCESSORY DEFINITION**: Only bags, belts, hats, or jewelry qualify. Never categorize clothing as accessories.
-- **STOCK RELIABILITY**: Do not recommend items that are sold out. Cross-reference availability before finalizing the selection.
+- **STOCK RELIABILITY**: Only recommend items where `availability` is exactly `"IN_STOCK"`. If availability is missing or not `"IN_STOCK"`, do not select the item.
+- **WEATHER FIT**: If the system context includes current weather/temperature, you MUST adapt fabric, footwear, and layering accordingly (rain/cold/heat). Do not ignore weather context. Still respect the 1–4 item limit and the one-item-per-category rule.
 
 ### THE ARCHITECTURAL PROPORTION
 - Volume Contrast: Master the "Big/Small" equilibrium. Pair wide-leg trousers or voluminous skirts with form-fitting/cropped "Small Tops." Alternatively, pair slim-fit bottoms (leggings/mini) with "Big Layers" (oversized blazers, longline coats).
@@ -141,11 +151,11 @@ Return the full updated outfit JSON.
 VIDOE_GENERATION_PROMPT = """
 Camera: Medium-full shot, 9:16 vertical aspect ratio. Execute a very slow, subtle zoom-in to add cinematic depth without pixel distortion.
 
-Subject: The model from the reference image, wearing {clothing_description}.
+Subject: The model from the reference image, wearing {clothing_description}. Preserve the model identity, face, body, hair, and pose from the reference.
 
 Action: The model performs a gentle weight shift and a graceful 15-degree turn to the side. This slight rotation showcases the garment's profile while maintaining front-side detail integrity.
 
-Physics: High-fidelity cloth simulation. The fabric must react naturally to the slight body rotation with realistic swaying, subtle folds, and light-catching textures.
+Physics: High-fidelity cloth simulation. The fabric must react naturally to the slight body rotation with realistic swaying, subtle folds, and light-catching textures. Only the outfit should move; do not change the person.
 
-Environment: Clean, minimalist studio setting with a neutral background. Use soft, even three-point lighting to emphasize fabric texture and eliminate harsh shadows. No text, subtitles, or watermarks.
+Environment: Keep the background and lighting identical to the reference image. Use soft, even three-point lighting to emphasize fabric texture and eliminate harsh shadows. No text, subtitles, or watermarks.
 """
