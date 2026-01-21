@@ -11,7 +11,12 @@ VIDEO_GEN_MODEL = "veo-3.1-fast-generate-preview"
 FILE_SEARCH_STORE = "fileSearchStores/gira-style-hackathonaritzia-qegz3krvdqkv"
 
 # Image generation prompt
-IMAGE_GEN_PROMPT = "Please use these {item_count} images to generate a whole outfit."
+IMAGE_GEN_PROMPT = (
+    "Use the first image as the base model and background. Keep the person, face, body, "
+    "pose, hair, and background unchanged. Only change the outfit to match the provided "
+    "SKU item images. Combine the {item_count} item images into a single cohesive full outfit. "
+    "Do not alter identity, camera framing, or environment."
+)
 
 user_style = ""
 user_color = ""
@@ -141,11 +146,11 @@ Return the full updated outfit JSON.
 VIDOE_GENERATION_PROMPT = """
 Camera: Medium-full shot, 9:16 vertical aspect ratio. Execute a very slow, subtle zoom-in to add cinematic depth without pixel distortion.
 
-Subject: The model from the reference image, wearing {clothing_description}.
+Subject: The model from the reference image, wearing {clothing_description}. Preserve the model identity, face, body, hair, and pose from the reference.
 
 Action: The model performs a gentle weight shift and a graceful 15-degree turn to the side. This slight rotation showcases the garment's profile while maintaining front-side detail integrity.
 
-Physics: High-fidelity cloth simulation. The fabric must react naturally to the slight body rotation with realistic swaying, subtle folds, and light-catching textures.
+Physics: High-fidelity cloth simulation. The fabric must react naturally to the slight body rotation with realistic swaying, subtle folds, and light-catching textures. Only the outfit should move; do not change the person.
 
-Environment: Clean, minimalist studio setting with a neutral background. Use soft, even three-point lighting to emphasize fabric texture and eliminate harsh shadows. No text, subtitles, or watermarks.
+Environment: Keep the background and lighting identical to the reference image. Use soft, even three-point lighting to emphasize fabric texture and eliminate harsh shadows. No text, subtitles, or watermarks.
 """

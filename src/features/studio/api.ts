@@ -257,7 +257,7 @@ export async function generateImage(outfitItems: RecommendationItem[], options: 
     normalizedItems.map(async (item) => {
       const image = getItemImage(item);
       const image_base64 = image ? await fetchImageAsBase64(image, options) : null;
-      return { item_name: item.item_name, image_base64 };
+      return { item_name: item.item_name, sku: item.sku, image_base64 };
     }),
   );
 

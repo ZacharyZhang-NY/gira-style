@@ -48,6 +48,8 @@ const EMPTY_STUDIO_STATE: StudioState = {
   selectedIndex: 0,
   updatedAt: "",
 };
+const GENERIC_API_ERROR_MESSAGE =
+  "Our AI is a bit busy right now due to high demand. Please wait a moment and try again!.";
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -645,14 +647,16 @@ export function Studio() {
           ? "Give me a moment—I’m pulling pieces that match your vibe."
           : responseText || "I’m ready when you are.";
 
-      const errorNotes = [
-        v.stageErrors?.a ? `Recommendation issue: ${v.stageErrors.a}` : "",
-        v.stageErrors?.b ? `Image generation issue: ${v.stageErrors.b}` : "",
-        v.stageErrors?.c ? `Video preview issue: ${v.stageErrors.c}` : "",
-      ].filter(Boolean);
-
-      const assistantText = errorNotes.length
-        ? `${baseText}\n\n${errorNotes.join("\n")}`
+      const stageErrors = [
+        v.stageErrors?.a,
+        v.stageErrors?.b,
+        v.stageErrors?.c,
+      ].filter(Boolean) as string[];
+      const hasNonInterruptError = stageErrors.some(
+        (message) => !message.toLowerCase().includes("interrupted"),
+      );
+      const assistantText = hasNonInterruptError
+        ? GENERIC_API_ERROR_MESSAGE
         : baseText;
 
       return [

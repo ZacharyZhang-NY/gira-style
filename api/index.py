@@ -7,6 +7,7 @@ import base64
 import time
 import urllib.request
 import uuid
+import random
 
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
@@ -21,6 +22,9 @@ from psycopg2.extras import Json
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
+
+TEMPLATE_DIR = os.path.join(ROOT_DIR, "templates")
+TEMPLATE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 
 # Load environment variables from .env.local for local dev
 load_dotenv(os.path.join(ROOT_DIR, ".env.local"))
@@ -144,6 +148,35 @@ def fetch_video_bytes(video_uri: str):
             return response.read()
     except Exception as e:
         logger.warning(f"Failed to fetch video bytes: {e}")
+        return None
+
+
+def load_random_template_image():
+    if not os.path.isdir(TEMPLATE_DIR):
+        logger.warning("Template directory not found: %s", TEMPLATE_DIR)
+        return None
+    candidates = [
+        entry for entry in os.scandir(TEMPLATE_DIR)
+        if entry.is_file() and entry.name.lower().endswith(TEMPLATE_EXTENSIONS)
+    ]
+    if not candidates:
+        logger.warning("No template images found in %s", TEMPLATE_DIR)
+        return None
+    chosen = random.choice(candidates)
+    try:
+        with open(chosen.path, "rb") as handle:
+            image_bytes = handle.read()
+        mime_type = mimetypes.guess_type(chosen.path)[0] or "image/png"
+        if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
+            logger.warning(
+                "Template image has unsupported mime type: %s (%s)",
+                mime_type,
+                chosen.name,
+            )
+            return None
+        return image_bytes, mime_type, chosen.name
+    except Exception as e:
+        logger.warning("Failed to load template image %s: %s", chosen.name, e)
         return None
 
 
@@ -696,6 +729,7 @@ def generate_image():
 
         contents = []
         successful_items = []
+        item_parts = []
 
         def resolve_image_bytes(image_value):
             if not image_value or not isinstance(image_value, str):
@@ -720,6 +754,7 @@ def generate_image():
 
         for item in outfit_items:
             item_name = item.get('item_name')
+            item_sku = item.get('sku') or item.get('SKU')
             image_base64 = item.get('image_base64')
             image_url = item.get('image')
             image_url = image_url or item.get('image_url') or item.get('imageUrl')
@@ -737,15 +772,30 @@ def generate_image():
                 if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
                     logger.warning(f"Unsupported image mime type for {item_name}: {mime_type}")
                     continue
-                contents.append(types.Part.from_text(text=f"This image shows the {item_name}."))
-                contents.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
-                successful_items.append(item_name)
-                logger.debug(f"Added image for {item_name}, size: {len(image_bytes)} bytes")
+                label = item_name or "item"
+                if item_sku:
+                    label = f"{label} (SKU {item_sku})"
+                item_parts.append(types.Part.from_text(text=f"This image shows the {label}."))
+                item_parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+                successful_items.append(label)
+                logger.debug(f"Added image for {label}, size: {len(image_bytes)} bytes")
             except Exception as e:
                 logger.warning(f"Failed to load image for {item_name}: {e}")
         
         if len(successful_items) == 0:
             return jsonify({'error': 'No valid images received. Unable to generate outfit visualization.'}), 500
+
+        template_payload = load_random_template_image()
+        if not template_payload:
+            return jsonify({'error': 'No template images available for generation.'}), 500
+        template_bytes, template_mime, template_name = template_payload
+        contents.append(
+            types.Part.from_text(
+                text=f"Template model reference ({template_name}). Keep the person and background unchanged."
+            )
+        )
+        contents.append(types.Part.from_bytes(data=template_bytes, mime_type=template_mime))
+        contents.extend(item_parts)
 
         item_count = len(successful_items)
         prompt = IMAGE_GEN_PROMPT.format(item_count=item_count)
