@@ -5,6 +5,12 @@ export type ColdStartAnswers = {
   q2: string[];
   q3: string[];
   q4: string;
+  zipCode: string;
+  location?: {
+    latitude?: number;
+    longitude?: number;
+    source?: "geolocation" | "manual";
+  };
   styleNote: string;
 };
 
@@ -130,6 +136,8 @@ export const EMPTY_COLD_START_ANSWERS: ColdStartAnswers = {
   q2: [],
   q3: [],
   q4: "",
+  zipCode: "",
+  location: {},
   styleNote: "",
 };
 

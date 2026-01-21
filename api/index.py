@@ -6,6 +6,7 @@ import mimetypes
 import base64
 import time
 import urllib.request
+import urllib.parse
 import uuid
 import random
 
@@ -80,6 +81,44 @@ R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "")
 
 _r2_client = None
 _chat_cache = {}
+_weather_cache = {}
+
+WEATHER_CACHE_TTL_SECONDS = float(os.getenv('WEATHER_CACHE_TTL_SECONDS', '600'))
+WEATHER_CACHE_MAX_ENTRIES = int(os.getenv('WEATHER_CACHE_MAX_ENTRIES', '200'))
+
+OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+OPEN_METEO_WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
+
+WEATHER_CODE_DESCRIPTIONS = {
+    0: "Clear sky",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Depositing rime fog",
+    51: "Light drizzle",
+    53: "Moderate drizzle",
+    55: "Dense drizzle",
+    56: "Light freezing drizzle",
+    57: "Dense freezing drizzle",
+    61: "Slight rain",
+    63: "Moderate rain",
+    65: "Heavy rain",
+    66: "Light freezing rain",
+    67: "Heavy freezing rain",
+    71: "Slight snow fall",
+    73: "Moderate snow fall",
+    75: "Heavy snow fall",
+    77: "Snow grains",
+    80: "Slight rain showers",
+    81: "Moderate rain showers",
+    82: "Violent rain showers",
+    85: "Slight snow showers",
+    86: "Heavy snow showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm with slight hail",
+    99: "Thunderstorm with heavy hail",
+}
 
 
 def get_db_connection():
@@ -191,6 +230,142 @@ def normalize_session_id(raw_session_id):
 
 def build_media_key(session_id: str, turn_index: int, filename: str):
     return f"sessions/{session_id}/turns/{turn_index}/{filename}"
+
+def safe_float(value):
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def describe_weather_code(code):
+    try:
+        code_int = int(code)
+    except (TypeError, ValueError):
+        return ""
+    return WEATHER_CODE_DESCRIPTIONS.get(code_int, f"Weather code {code_int}")
+
+
+def fetch_json(url, timeout=10, headers=None):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        data = response.read()
+    return json.loads(data.decode("utf-8"))
+
+
+def trim_weather_cache():
+    if len(_weather_cache) <= WEATHER_CACHE_MAX_ENTRIES:
+        return
+    entries = sorted(_weather_cache.items(), key=lambda item: item[1].get("ts", 0))
+    remove_count = max(0, len(entries) - WEATHER_CACHE_MAX_ENTRIES)
+    for i in range(remove_count):
+        _weather_cache.pop(entries[i][0], None)
+
+
+def geocode_zip(zip_code, language="en"):
+    if not zip_code:
+        return None
+    params = {
+        "name": zip_code,
+        "count": 1,
+        "language": language or "en",
+        "format": "json",
+    }
+    url = f"{OPEN_METEO_GEOCODING_URL}?{urllib.parse.urlencode(params)}"
+    try:
+        payload = fetch_json(url, timeout=8)
+    except Exception:
+        return None
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if not results or not isinstance(results, list):
+        return None
+    first = results[0] if results else None
+    if not isinstance(first, dict):
+        return None
+    latitude = safe_float(first.get("latitude"))
+    longitude = safe_float(first.get("longitude"))
+    if latitude is None or longitude is None:
+        return None
+    return {
+        "latitude": latitude,
+        "longitude": longitude,
+        "name": first.get("name"),
+        "admin1": first.get("admin1"),
+        "country": first.get("country"),
+        "country_code": first.get("country_code"),
+    }
+
+
+def fetch_current_weather(latitude, longitude, use_imperial=True):
+    if latitude is None or longitude is None:
+        return None
+
+    cache_key = f"{round(float(latitude), 3)}:{round(float(longitude), 3)}:{'imp' if use_imperial else 'met'}"
+    now_ts = time.time()
+    cached = _weather_cache.get(cache_key)
+    if cached and now_ts - cached.get("ts", 0) < WEATHER_CACHE_TTL_SECONDS:
+        return cached.get("summary")
+
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "current": ",".join(
+            [
+                "temperature_2m",
+                "apparent_temperature",
+                "precipitation",
+                "weather_code",
+                "wind_speed_10m",
+            ]
+        ),
+        "timezone": "auto",
+        "temperature_unit": "fahrenheit" if use_imperial else "celsius",
+        "wind_speed_unit": "mph" if use_imperial else "kmh",
+        "precipitation_unit": "inch" if use_imperial else "mm",
+    }
+    url = f"{OPEN_METEO_WEATHER_URL}?{urllib.parse.urlencode(params)}"
+
+    try:
+        payload = fetch_json(url, timeout=10)
+    except Exception:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    current = payload.get("current") if isinstance(payload.get("current"), dict) else {}
+    units = payload.get("current_units") if isinstance(payload.get("current_units"), dict) else {}
+
+    temperature = current.get("temperature_2m")
+    apparent = current.get("apparent_temperature")
+    precipitation = current.get("precipitation")
+    wind_speed = current.get("wind_speed_10m")
+    weather_code = current.get("weather_code")
+    description = describe_weather_code(weather_code)
+
+    temp_unit = units.get("temperature_2m") or ("°F" if use_imperial else "°C")
+    precip_unit = units.get("precipitation") or ("in" if use_imperial else "mm")
+    wind_unit = units.get("wind_speed_10m") or ("mph" if use_imperial else "km/h")
+
+    parts = []
+    if isinstance(temperature, (int, float)):
+        temp_str = f"{round(float(temperature))}{temp_unit}"
+        if isinstance(apparent, (int, float)) and round(float(apparent)) != round(float(temperature)):
+            temp_str += f" (feels like {round(float(apparent))}{temp_unit})"
+        parts.append(temp_str)
+    if description:
+        parts.append(description)
+    if isinstance(precipitation, (int, float)) and float(precipitation) > 0:
+        parts.append(f"precip {precipitation}{precip_unit}")
+    if isinstance(wind_speed, (int, float)) and float(wind_speed) > 0:
+        parts.append(f"wind {round(float(wind_speed))} {wind_unit}")
+
+    summary = ", ".join(parts).strip() if parts else None
+    if summary:
+        _weather_cache[cache_key] = {"ts": now_ts, "summary": summary}
+        trim_weather_cache()
+    return summary
 
 
 def upsert_session(session_id, preferences, system_prompt, user_agent, locale, timezone):
@@ -627,6 +802,144 @@ def get_recommendation():
                 )
         else:
             context_prompt = user_input
+
+        system_context_lines = []
+
+        client_time = data.get('clientTime') or data.get('client_time') or {}
+        if not isinstance(client_time, dict):
+            client_time = {}
+        client_local_datetime = str(
+            client_time.get('localDateTime')
+            or client_time.get('local_date_time')
+            or data.get('clientLocalDateTime')
+            or data.get('client_local_date_time')
+            or ''
+        ).strip()
+        client_timezone = str(
+            client_time.get('timezone')
+            or data.get('clientTimezone')
+            or data.get('client_timezone')
+            or ''
+        ).strip()
+        client_locale = str(
+            client_time.get('locale')
+            or data.get('clientLocale')
+            or data.get('client_locale')
+            or ''
+        ).strip()
+
+        if client_local_datetime:
+            if client_timezone:
+                system_context_lines.append(
+                    f"User local datetime: {client_local_datetime} ({client_timezone})"
+                )
+            else:
+                system_context_lines.append(f"User local datetime: {client_local_datetime}")
+        elif client_timezone:
+            system_context_lines.append(f"User timezone: {client_timezone}")
+
+        if client_locale:
+            system_context_lines.append(f"User locale: {client_locale}")
+
+        client_location = data.get('clientLocation') or data.get('client_location') or {}
+        if not isinstance(client_location, dict):
+            client_location = {}
+
+        zip_code = str(
+            client_location.get('zipCode')
+            or client_location.get('zip_code')
+            or client_location.get('postalCode')
+            or client_location.get('postal_code')
+            or ''
+        ).strip()
+
+        latitude = safe_float(client_location.get('latitude') or client_location.get('lat'))
+        longitude = safe_float(
+            client_location.get('longitude')
+            or client_location.get('lon')
+            or client_location.get('lng')
+        )
+
+        pref_location = {}
+        if session_preferences and isinstance(session_preferences, dict):
+            if not zip_code:
+                zip_code = str(
+                    session_preferences.get('zipCode')
+                    or session_preferences.get('zip_code')
+                    or ''
+                ).strip()
+            pref_location = (
+                session_preferences.get('location')
+                if isinstance(session_preferences.get('location'), dict)
+                else {}
+            )
+            if latitude is None:
+                latitude = safe_float(
+                    pref_location.get('latitude')
+                    or session_preferences.get('latitude')
+                    or session_preferences.get('lat')
+                )
+            if longitude is None:
+                longitude = safe_float(
+                    pref_location.get('longitude')
+                    or session_preferences.get('longitude')
+                    or session_preferences.get('lon')
+                    or session_preferences.get('lng')
+                )
+
+        if zip_code:
+            system_context_lines.append(f"User zip code: {zip_code}")
+
+        geo_result = None
+        if (latitude is None or longitude is None) and zip_code:
+            language_hint = client_locale.split("-")[0] if client_locale else "en"
+            geo_result = geocode_zip(zip_code, language=language_hint)
+            if geo_result:
+                latitude = geo_result.get("latitude")
+                longitude = geo_result.get("longitude")
+
+        use_imperial = True
+        if client_locale:
+            use_imperial = client_locale.lower().startswith("en-us")
+        if geo_result and geo_result.get("country_code") == "US":
+            use_imperial = True
+
+        weather_summary = fetch_current_weather(
+            latitude,
+            longitude,
+            use_imperial=use_imperial,
+        )
+        if weather_summary:
+            location_label_parts = []
+            if geo_result and isinstance(geo_result, dict):
+                name = geo_result.get("name")
+                admin1 = geo_result.get("admin1")
+                country = geo_result.get("country")
+                if name and admin1:
+                    location_label_parts.append(f"{name}, {admin1}")
+                elif name:
+                    location_label_parts.append(str(name))
+                elif admin1:
+                    location_label_parts.append(str(admin1))
+                if country:
+                    location_label_parts.append(str(country))
+            if zip_code:
+                location_label_parts.append(f"ZIP {zip_code}")
+            location_label = " · ".join([part for part in location_label_parts if part])
+            if location_label:
+                system_context_lines.append(
+                    f"Current weather ({location_label}): {weather_summary}"
+                )
+            else:
+                system_context_lines.append(f"Current weather: {weather_summary}")
+
+        if system_context_lines:
+            context_prompt = (
+                "SYSTEM CONTEXT (do not repeat):\n"
+                + "\n".join(f"- {line}" for line in system_context_lines)
+                + "\n\n"
+                + context_prompt
+            )
 
         # Configure File Search tool
         file_search_tool = types.Tool(
