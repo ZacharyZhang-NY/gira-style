@@ -271,7 +271,7 @@ export function ColdStart() {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 pb-16 pt-10">
-        <div className="grid grid-cols-12 items-start gap-10">
+        <div className="grid grid-cols-12 items-start gap-x-0 gap-y-10 sm:gap-10">
           <div className="col-span-12 lg:col-span-4">
             <div className="lg:sticky lg:top-28">
               <div className="sr-only">Quick setup</div>
