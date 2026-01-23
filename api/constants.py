@@ -18,6 +18,41 @@ IMAGE_GEN_PROMPT = (
     "Do not alter identity, camera framing, or environment."
 )
 
+# User guided prompts (from chip.txt)
+CHIP_CATEGORIES = {
+    "Occasion": [
+        "Find me an outfit for a party",
+        "What should I wear often to work?",
+        "Date night inspiration",
+        "Formal event dressing",
+        "Casual weekend vibes",
+    ],
+    "Style Preference": [
+        "Minimalist chic",
+        "Bohemian flair",
+        "Sporty and comfortable",
+        "Classic and elegant",
+        "Trend-focused suggestions",
+    ],
+    "Body Focus": [
+        "Highlight my waist",
+        "Find the perfect jeans",
+        "Flattering fits for my shape",
+        "elongate my silhouette",
+        "Best outfits for my height",
+    ],
+    "Budget/Experimentation": [
+        "Budget-friendly finds",
+        "Try a new style!",
+        "Step out of my comfort zone",
+        "Surprise me with a bold look",
+        "Experiment with trends",
+    ],
+}
+
+# Flattened list for convenience where a single list is needed.
+CHIPS = [chip for chips in CHIP_CATEGORIES.values() for chip in chips]
+
 user_style = ""
 user_color = ""
 user_shopping_preference = ""
