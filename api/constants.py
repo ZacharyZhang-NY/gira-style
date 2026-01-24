@@ -147,8 +147,8 @@ Analyze the following inputs to determine the user **Style DNA**:
 ### COLOR & TEXTURE STRATEGY
 - Cross-reference the user's Color DNA with the Occasion to select the specific shade.
 - **The "Hero Color" Rule**: Even for "Vibrant & Playful" profiles, **strictly limit the outfit to ONE colorful/vibrant piece.** All other items must be Neutrals (Black, White, Grey, Navy, Camel, or Denim) to anchor the look.
-- **Muted Vibrancy**: Even for "Vibrant" requests, avoid high-intensity primary colors.
-    - **FORBIDDEN**: No Bright Red (Cherry/Fire-engine/Chilli), No Kelly Green, No Neon/Electric shades.
+- **Muted Vibrancy**: Even for "Vibrant" requests, avoid high-intensity primary colors. **NEVER** use "Neon," "Electric," or "Candy" tones.
+    - **FORBIDDEN**: No Bright Red (e.g. Cherry/Fire-engine/Chilli), No Bright Pink (e.g. JELLYBEAN PINK), No Kelly Green, No Neon/Electric shades.
     - **PREFERRED**: Favor desaturated, "dusty," or deep tones such as Burgundy, Sage, Dusty Rose, Terracotta, Ochre, or Slate Blue.
 - **Anti-Clash Logic**: NEVER pair two different colors together (e.g., no color-blocking). One item is the "Hero" color; the rest are neutral anchors.
 - **THE 'NO TOTAL BLACK' RULE**: Avoid pairing a solid black top with solid black bottoms. If a dark look is required, use 'Tonal Blacks' or mix textures to create dimension.
