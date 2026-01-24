@@ -769,14 +769,18 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
         <div className="mx-auto max-w-7xl px-6 pt-5">
           <div className="flex items-center justify-between gap-4 rounded-full px-4 py-3 ui-glass-liquid">
             <Link href="/" className="flex items-baseline gap-2">
-              <span className="font-display text-lg leading-none tracking-tight text-text">
+              <span className="font-display text-base leading-none tracking-tight text-text sm:text-lg">
                 GiraStyle
               </span>
             </Link>
 
             <div className="flex items-center gap-3">
-              <ThemeToggle />
-              <Button tone="outline" onClick={startOver} className="px-5">
+              <ThemeToggle className="[&_button]:px-3 [&_button]:py-1.5 [&_button]:text-[10px] [&_button]:tracking-[0.2em] sm:[&_button]:px-4 sm:[&_button]:py-2 sm:[&_button]:text-[11px] sm:[&_button]:tracking-[0.22em]" />
+              <Button
+                tone="outline"
+                onClick={startOver}
+                className="px-4 py-2 text-[11px] sm:px-5 sm:py-2.5 sm:text-sm"
+              >
                 Start over
               </Button>
             </div>
