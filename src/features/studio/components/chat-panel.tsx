@@ -26,6 +26,7 @@ type ChatPanelProps = {
   disableVideoToggle: boolean;
   videoEnabled: boolean;
   messages: ChatMessage[];
+  chips?: string[];
   mobileOutputs?: Record<string, React.ReactNode>;
   onSubmitRequest: (value: string) => void;
   onInterrupt?: () => void;
@@ -107,6 +108,7 @@ export function ChatPanel({
   disableVideoToggle,
   videoEnabled,
   messages,
+  chips = [],
   mobileOutputs,
   onSubmitRequest,
   onInterrupt,
@@ -116,6 +118,20 @@ export function ChatPanel({
   const [value, setValue] = React.useState("");
   const [error, setError] = React.useState("");
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const [chipOptions] = React.useState(() => {
+    if (!chips.length) return [];
+    const shuffled = [...chips];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, 3);
+  });
+  const hasUserMessage = React.useMemo(
+    () => messages.some((msg) => msg.role === "user"),
+    [messages],
+  );
+  const showChips = chipOptions.length > 0 && !hasUserMessage;
 
   const scrollToBottom = React.useCallback(
     (behavior: ScrollBehavior = "auto") => {
@@ -176,6 +192,31 @@ export function ChatPanel({
                 </div>
               );
             })}
+            {showChips ? (
+              <div className="flex flex-wrap gap-2 pt-2">
+                {chipOptions.map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    disabled={disableComposer}
+                    onClick={() => {
+                      if (disableComposer) return;
+                      setError("");
+                      setValue("");
+                      onSubmitRequest(chip);
+                    }}
+                    className={cn(
+                      "rounded-full px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.22em]",
+                      "ui-glass-subtle text-muted transition-colors",
+                      "hover:text-text",
+                      "disabled:cursor-not-allowed disabled:opacity-60",
+                    )}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         </AnimatePresence>
       </div>

@@ -265,7 +265,7 @@ export function ColdStart() {
               </span>
             </Link>
 
-            <ThemeToggle className="hidden sm:inline-flex" />
+            <ThemeToggle />
           </div>
         </div>
       </header>
@@ -422,25 +422,41 @@ export function ColdStart() {
                               const latitude = position.coords.latitude;
                               const longitude = position.coords.longitude;
 
+                              const geoapifyKey =
+                                process.env.NEXT_PUBLIC_GEOAPIFY_API_KEY;
+                              if (!geoapifyKey) {
+                                throw new Error(
+                                  "Location lookup isn’t configured—type your zip code instead.",
+                                );
+                              }
+
                               const resp = await fetch(
-                                `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(
+                                `https://api.geoapify.com/v1/geocode/reverse?lat=${encodeURIComponent(
                                   String(latitude),
-                                )}&longitude=${encodeURIComponent(
+                                )}&lon=${encodeURIComponent(
                                   String(longitude),
-                                )}&localityLanguage=en`,
+                                )}&lang=en&limit=1&apiKey=${encodeURIComponent(
+                                  geoapifyKey,
+                                )}`,
                               );
                               if (!resp.ok) {
                                 throw new Error("Unable to detect zip code.");
                               }
-                              const payload = (await resp.json()) as { postcode?: unknown };
+                              const payload = (await resp.json()) as {
+                                features?: Array<{
+                                  properties?: { postcode?: unknown };
+                                }>;
+                              };
                               const postcode =
-                                typeof payload.postcode === "string"
-                                  ? payload.postcode.trim()
+                                typeof payload.features?.[0]?.properties
+                                  ?.postcode === "string"
+                                  ? payload.features[0].properties.postcode.trim()
                                   : "";
                               if (!postcode) {
-                                throw new Error("We couldn’t detect a zip code for this location.");
+                                throw new Error(
+                                  "We couldn’t detect a zip code for this location.",
+                                );
                               }
-
                               if (stepIndexRef.current !== zipStepIndex) {
                                 return;
                               }

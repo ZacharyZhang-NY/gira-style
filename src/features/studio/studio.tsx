@@ -273,7 +273,7 @@ function VersionOutput({
   );
 }
 
-export function Studio() {
+export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
   const router = useRouter();
 
   const [hydrated, setHydrated] = React.useState(false);
@@ -775,7 +775,7 @@ export function Studio() {
             </Link>
 
             <div className="flex items-center gap-3">
-              <ThemeToggle className="hidden sm:inline-flex" />
+              <ThemeToggle />
               <Button tone="outline" onClick={startOver} className="px-5">
                 Start over
               </Button>
@@ -818,6 +818,7 @@ export function Studio() {
               disableVideoToggle={isGenerating || !hydrated}
               videoEnabled={videoEnabled}
               messages={messages}
+              chips={initialChips}
               mobileOutputs={Object.fromEntries(
                 versions.map((version) => [
                   version.id,
