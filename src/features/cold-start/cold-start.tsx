@@ -260,12 +260,12 @@ export function ColdStart() {
         <div className="mx-auto max-w-6xl px-6 pt-5">
           <div className="flex items-center justify-between gap-4 rounded-full px-4 py-3 ui-glass-liquid">
             <Link href="/" className="flex items-baseline gap-2">
-              <span className="font-display text-lg leading-none tracking-tight text-text">
+              <span className="font-display text-base leading-none tracking-tight text-text sm:text-lg">
                 GiraStyle
               </span>
             </Link>
 
-            <ThemeToggle />
+            <ThemeToggle className="[&_button]:px-3 [&_button]:py-1.5 [&_button]:text-[10px] [&_button]:tracking-[0.2em] sm:[&_button]:px-4 sm:[&_button]:py-2 sm:[&_button]:text-[11px] sm:[&_button]:tracking-[0.22em]" />
           </div>
         </div>
       </header>
@@ -275,7 +275,7 @@ export function ColdStart() {
           <div className="col-span-12 lg:col-span-4">
             <div className="lg:sticky lg:top-28">
               <div className="sr-only">Quick setup</div>
-              <h1 className="mt-4 font-display text-4xl leading-[1.05] tracking-tight text-text sm:text-5xl">
+              <h1 className="mt-4 font-display text-3xl leading-[1.1] tracking-tight text-text sm:text-5xl sm:leading-[1.05]">
                 Let&apos;s find your{" "}
                 <span className="italic">quiet confidence</span>.
               </h1>
@@ -283,7 +283,7 @@ export function ColdStart() {
               <Surface tone="subtle" className="mt-8 p-6" aria-live="polite">
                 <div className="flex items-end justify-between gap-6">
                   <div className="sr-only">Progress</div>
-                  <div className="text-sm font-semibold text-text">
+                  <div className="text-xs font-semibold text-text sm:text-sm">
                     {currentStep} / {totalSteps}
                   </div>
                 </div>
@@ -323,20 +323,28 @@ export function ColdStart() {
                 >
                   <div className="flex flex-wrap items-end justify-between gap-6">
                     <div className="max-w-[60ch]">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-muted sm:text-[11px]">
                         {isStyleStep
                           ? "Your style"
                           : isZipStep
                             ? "Your location"
                             : `Question ${stepIndex + 1}`}
                       </div>
-                      <h2 className="mt-3 font-display text-2xl leading-[1.15] tracking-tight text-text sm:text-3xl">
+                      <h2 className="mt-3 font-display text-xl leading-[1.2] tracking-tight text-text sm:text-3xl sm:leading-[1.15]">
                         {isStyleStep
                           ? "Describe your style in one sentence."
                           : isZipStep
                             ? "What’s your zip code?"
                           : question?.title}
                       </h2>
+                      {!isStyleStep &&
+                      !isZipStep &&
+                      question?.multi &&
+                      question?.hint ? (
+                        <p className="mt-3 text-xs leading-relaxed text-muted sm:text-sm">
+                          {question.hint}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
 
@@ -344,7 +352,7 @@ export function ColdStart() {
                     <div className="mt-8 space-y-3">
                       <label
                         htmlFor="styleText"
-                        className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted"
+                        className="text-[10px] font-semibold uppercase tracking-[0.3em] text-muted sm:text-[11px]"
                       >
                         Style note{" "}
                         <span className="text-muted">(optional)</span>
@@ -365,11 +373,11 @@ export function ColdStart() {
                     <div className="mt-8 space-y-4">
                       <label
                         htmlFor="zipCode"
-                        className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted"
+                        className="text-[10px] font-semibold uppercase tracking-[0.3em] text-muted sm:text-[11px]"
                       >
                         Zip code <span className="text-muted">(optional)</span>
                       </label>
-                      <p className="text-sm leading-relaxed text-muted">
+                      <p className="text-xs leading-relaxed text-muted sm:text-sm">
                         Used only to tailor fabrics and layering to your local
                         weather.
                       </p>
@@ -481,6 +489,7 @@ export function ColdStart() {
                             }
                           }}
                           isLoading={isDetectingZip}
+                          className="text-xs sm:text-sm"
                         >
                           Use my location
                         </Button>
@@ -515,11 +524,11 @@ export function ColdStart() {
                                 )}
                               >
                                 <div className="min-w-0">
-                                  <div className="font-display text-2xl leading-tight tracking-tight text-text">
+                                  <div className="font-display text-lg leading-tight tracking-tight text-text sm:text-2xl">
                                     {opt.title}
                                   </div>
                                   {showSubtitle && subtitle ? (
-                                    <div className="mt-2 text-sm leading-relaxed text-muted">
+                                    <div className="mt-2 text-xs leading-relaxed text-muted sm:text-sm">
                                       {subtitle}
                                     </div>
                                   ) : null}
@@ -547,7 +556,7 @@ export function ColdStart() {
                   )}
 
                   {error ? (
-                    <p role="alert" className="mt-6 text-sm text-text">
+                    <p role="alert" className="mt-6 text-xs text-text sm:text-sm">
                       {error}
                     </p>
                   ) : null}
@@ -557,16 +566,21 @@ export function ColdStart() {
                       tone="ghost"
                       onClick={goBack}
                       disabled={stepIndex === 0}
+                      className="text-xs sm:text-sm"
                     >
                       Back
                     </Button>
 
                     {isStyleStep ? (
-                      <Button onClick={finish} isLoading={isSaving}>
+                      <Button
+                        onClick={finish}
+                        isLoading={isSaving}
+                        className="text-xs sm:text-sm"
+                      >
                         Start chatting
                       </Button>
                     ) : (
-                      <Button onClick={goNext}>
+                      <Button onClick={goNext} className="text-xs sm:text-sm">
                         {isZipStep && !hasZipCode ? "Skip" : "Next"}
                       </Button>
                     )}
@@ -580,3 +594,5 @@ export function ColdStart() {
     </div>
   );
 }
+
+
