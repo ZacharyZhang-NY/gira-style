@@ -49,3 +49,13 @@ export type StudioState = {
   selectedIndex: number;
   updatedAt: string;
 };
+
+export type CommunityLook = {
+  sessionId: string;
+  turnIndex: number;
+  imageUrl: string;
+  feedback: "" | "up" | "down";
+  upVotes?: number;
+  downVotes?: number;
+  viewerFeedback?: "" | "up" | "down";
+};

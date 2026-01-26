@@ -13,12 +13,22 @@ type OutfitPreviewProps = {
   state: StageState;
   image?: string;
   feedback?: "up" | "down" | "";
+  upCount?: number;
+  downCount?: number;
   onFeedback: (value: "up" | "down") => void;
 };
 
-export function OutfitPreview({ state, image, feedback, onFeedback }: OutfitPreviewProps) {
+export function OutfitPreview({
+  state,
+  image,
+  feedback,
+  upCount,
+  downCount,
+  onFeedback,
+}: OutfitPreviewProps) {
   const shouldReduceMotion = useReducedMotion();
   const [imageReady, setImageReady] = React.useState(false);
+  const [imageFailed, setImageFailed] = React.useState(false);
   const showLoading = state === "loading";
   const hasImage = typeof image === "string" && image.length > 0;
   const selectedEase: [number, number, number, number] = [0.16, 1, 0.3, 1];
@@ -28,10 +38,12 @@ export function OutfitPreview({ state, image, feedback, onFeedback }: OutfitPrev
 
   React.useEffect(() => {
     setImageReady(false);
+    setImageFailed(false);
   }, [image, showLoading]);
 
-  const flowActive = showLoading || (hasImage && !imageReady);
-  const showPlaceholder = showLoading || !hasImage || !imageReady;
+  const flowActive = showLoading || (hasImage && !imageReady && !imageFailed);
+  const showPlaceholder =
+    showLoading || !hasImage || !imageReady || imageFailed;
   const placeholderVariant = flowActive ? "loading" : "mock";
 
   const handleImageLoad = React.useCallback(() => {
@@ -42,6 +54,11 @@ export function OutfitPreview({ state, image, feedback, onFeedback }: OutfitPrev
     requestAnimationFrame(() => setImageReady(true));
   }, [shouldReduceMotion]);
 
+  const handleImageError = React.useCallback(() => {
+    setImageFailed(true);
+    setImageReady(true);
+  }, []);
+
   return (
     <div className="relative aspect-[9/16] w-full">
       <MediaPlaceholder
@@ -51,12 +68,13 @@ export function OutfitPreview({ state, image, feedback, onFeedback }: OutfitPrev
           showPlaceholder ? "opacity-100" : "opacity-0",
         )}
       />
-      {hasImage ? (
+      {hasImage && !imageFailed ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={image}
           alt="Outfit preview"
           onLoad={handleImageLoad}
+          onError={handleImageError}
           className={cn(
             "absolute inset-0 h-full w-full object-cover",
             "transition-opacity duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]",
@@ -91,6 +109,16 @@ export function OutfitPreview({ state, image, feedback, onFeedback }: OutfitPrev
             )}
           >
             <ThumbsUp className="h-4 w-4" aria-hidden="true" />
+            {typeof upCount === "number" ? (
+              <span
+                className={cn(
+                  "absolute -right-2 -top-2 min-w-[20px] rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                  "bg-text text-bg shadow-lux-md",
+                )}
+              >
+                {upCount}
+              </span>
+            ) : null}
           </motion.button>
           <motion.button
             type="button"
@@ -110,6 +138,16 @@ export function OutfitPreview({ state, image, feedback, onFeedback }: OutfitPrev
             )}
           >
             <ThumbsDown className="h-4 w-4" aria-hidden="true" />
+            {typeof downCount === "number" ? (
+              <span
+                className={cn(
+                  "absolute -right-2 -top-2 min-w-[20px] rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                  "bg-text text-bg shadow-lux-md",
+                )}
+              >
+                {downCount}
+              </span>
+            ) : null}
           </motion.button>
         </div>
       ) : null}

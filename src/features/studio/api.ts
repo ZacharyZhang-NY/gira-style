@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColdStartAnswers } from "@/features/cold-start/questions";
-import type { RecommendationItem, RecommendationPayload } from "./types";
+import type { CommunityLook, RecommendationItem, RecommendationPayload } from "./types";
 import { getItemImage } from "./item";
 import { readLocalStorageJson } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
@@ -64,6 +64,15 @@ type LogSessionTurnResponse = {
   error?: string;
 };
 
+type CommunityLooksResponse = {
+  looks?: CommunityLook[];
+  error?: string;
+};
+
+type ChipsResponse = {
+  chips?: string[];
+  error?: string;
+};
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -287,6 +296,20 @@ async function requestJson<T>(path: string, body: unknown, options: RequestOptio
   return (await response.json()) as T;
 }
 
+async function requestGet<T>(path: string, options: RequestOptions = {}) {
+  const response = await fetch(buildApiUrl(path), {
+    method: "GET",
+    signal: options.signal,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with status ${response.status}.`);
+  }
+
+  return (await response.json()) as T;
+}
+
 export async function fetchRecommendation(
   request: RecommendationRequest,
   options: RequestOptions = {},
@@ -403,4 +426,73 @@ export async function logSessionTurn(sessionId: string, request: LogSessionTurnR
   if (!payload?.success) {
     throw new Error(payload?.error || "Session logging failed.");
   }
+}
+
+export async function generateSessionChips(
+  sessionId: string,
+  turnIndex: number,
+  conversationHistory: ConversationTurn[],
+  options: RequestOptions = {},
+) {
+  const payload = await requestJson<ChipsResponse>(
+    `/api/sessions/${sessionId}/chips`,
+    {
+      turnIndex,
+      conversationHistory,
+      clientTime: getClientTimeContext(),
+      clientLocation: getClientLocationContext(),
+    },
+    options,
+  );
+
+  if (!payload?.chips) {
+    throw new Error(payload?.error || "Chips unavailable.");
+  }
+
+  return payload.chips;
+}
+
+type CommunityLooksOptions = RequestOptions & {
+  voterId?: string;
+};
+
+export async function fetchCommunityLooks(options: CommunityLooksOptions = {}) {
+  const { voterId, ...requestOptions } = options;
+  const query = voterId ? `?voterId=${encodeURIComponent(voterId)}` : "";
+  const payload = await requestGet<CommunityLooksResponse>(
+    `/api/community/looks${query}`,
+    requestOptions,
+  );
+  if (!payload?.looks) {
+    throw new Error(payload?.error || "Community looks unavailable.");
+  }
+  return payload.looks;
+}
+
+export async function updateCommunityFeedback(
+  sessionId: string,
+  turnIndex: number,
+  feedback: "up" | "down",
+  voterId: string,
+  options: RequestOptions = {},
+) {
+  const payload = await requestJson<{
+    success?: boolean;
+    error?: string;
+    upVotes?: number;
+    downVotes?: number;
+    viewerFeedback?: "" | "up" | "down";
+  }>(
+    `/api/sessions/${sessionId}/turns/${turnIndex}/feedback`,
+    { feedback, voterId },
+    options,
+  );
+  if (!payload?.success) {
+    throw new Error(payload?.error || "Feedback update failed.");
+  }
+  return {
+    upVotes: payload.upVotes,
+    downVotes: payload.downVotes,
+    viewerFeedback: payload.viewerFeedback,
+  };
 }

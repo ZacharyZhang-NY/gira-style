@@ -27,8 +27,11 @@ type ChatPanelProps = {
   videoEnabled: boolean;
   messages: ChatMessage[];
   chips?: string[];
+  chipsVisible?: boolean;
   mobileOutputs?: Record<string, React.ReactNode>;
+  mobileIntroContent?: React.ReactNode;
   onSubmitRequest: (value: string) => void;
+  onChipSelect?: (value: string) => void;
   onInterrupt?: () => void;
   onToggleVideo: (value: boolean) => void;
 };
@@ -109,8 +112,11 @@ export function ChatPanel({
   videoEnabled,
   messages,
   chips = [],
+  chipsVisible,
   mobileOutputs,
+  mobileIntroContent,
   onSubmitRequest,
+  onChipSelect,
   onInterrupt,
   onToggleVideo,
 }: ChatPanelProps) {
@@ -118,20 +124,11 @@ export function ChatPanel({
   const [value, setValue] = React.useState("");
   const [error, setError] = React.useState("");
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
-  const [chipOptions] = React.useState(() => {
+  const chipOptions = React.useMemo(() => {
     if (!chips.length) return [];
-    const shuffled = [...chips];
-    for (let i = shuffled.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled.slice(0, 3);
-  });
-  const hasUserMessage = React.useMemo(
-    () => messages.some((msg) => msg.role === "user"),
-    [messages],
-  );
-  const showChips = chipOptions.length > 0 && !hasUserMessage;
+    return chips.slice(0, 3);
+  }, [chips]);
+  const showChips = chipsVisible ?? chipOptions.length > 0;
 
   const scrollToBottom = React.useCallback(
     (behavior: ScrollBehavior = "auto") => {
@@ -176,6 +173,9 @@ export function ChatPanel({
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
         <AnimatePresence initial={false}>
           <div className="flex flex-col gap-3">
+            {mobileIntroContent ? (
+              <div className="lg:hidden">{mobileIntroContent}</div>
+            ) : null}
             {messages.map((msg) => {
               const outputKey =
                 msg.role === "assistant" && msg.id.endsWith("-assistant")
@@ -193,7 +193,7 @@ export function ChatPanel({
               );
             })}
             {showChips ? (
-              <div className="flex flex-wrap gap-2 pt-2">
+              <div className="flex flex-wrap items-start justify-start gap-2 pt-2">
                 {chipOptions.map((chip) => (
                   <button
                     key={chip}
@@ -203,10 +203,11 @@ export function ChatPanel({
                       if (disableComposer) return;
                       setError("");
                       setValue("");
+                      onChipSelect?.(chip);
                       onSubmitRequest(chip);
                     }}
                     className={cn(
-                      "rounded-full px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.22em]",
+                      "self-start rounded-full px-4 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.22em]",
                       "ui-glass-subtle text-muted transition-colors",
                       "hover:text-text",
                       "disabled:cursor-not-allowed disabled:opacity-60",
