@@ -41,10 +41,12 @@ except ImportError:
 from api.constants import (
     IMG_GEN_MODEL,
     RECOMMENDATION_MODEL,
+    CHIPS_MODEL,
     RECOMMENDATION_PROMPT,
     build_recommendation_prompt,
     FOLLOW_UP_PROMPT,
     IMAGE_GEN_PROMPT,
+    CHIPS_PROMPT,
     FILE_SEARCH_STORE,
     VIDEO_GEN_MODEL,
     VIDOE_GENERATION_PROMPT,
@@ -152,6 +154,15 @@ def build_r2_url(object_key: str):
     return f"{R2_ENDPOINT.rstrip('/')}/{R2_BUCKET}/{object_key}"
 
 
+def build_signed_r2_url(object_key: str, expires_in: int = 3600):
+    client = get_r2_client()
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": R2_BUCKET, "Key": object_key},
+        ExpiresIn=expires_in,
+    )
+
+
 def parse_data_url(data_url: str):
     if not data_url or not isinstance(data_url, str):
         return None, None
@@ -248,13 +259,17 @@ def load_random_template_image():
         return None
 
 
-def normalize_session_id(raw_session_id):
-    if not raw_session_id:
+def normalize_uuid(raw_value):
+    if not raw_value:
         return None
     try:
-        return str(uuid.UUID(str(raw_session_id)))
+        return str(uuid.UUID(str(raw_value)))
     except (ValueError, TypeError):
         return None
+
+
+def normalize_session_id(raw_session_id):
+    return normalize_uuid(raw_session_id)
 
 
 def build_media_key(session_id: str, turn_index: int, filename: str):
@@ -497,6 +512,57 @@ def fetch_session_turns(session_id):
     return history
 
 
+def upsert_session_chips(session_id, turn_index, chips):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO session_chips (session_id, turn_index, chips, created_at)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (session_id, turn_index) DO UPDATE SET
+                    chips = EXCLUDED.chips,
+                    created_at = now()
+                """,
+                (session_id, turn_index, Json(chips)),
+            )
+
+
+def _normalize_chip_text(value):
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _build_chip_profile(preferences):
+    if not isinstance(preferences, dict):
+        return ""
+    def _list_to_text(value):
+        if isinstance(value, list):
+            items = [str(item).strip() for item in value if str(item).strip()]
+            return ", ".join(items)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return ""
+
+    lines = []
+    style = _list_to_text(preferences.get("q1"))
+    color = _list_to_text(preferences.get("q2"))
+    shopping = _list_to_text(preferences.get("q3"))
+    highlight = _list_to_text(preferences.get("q4"))
+    note = _list_to_text(preferences.get("styleNote") or preferences.get("style_note"))
+    if style:
+        lines.append(f"Style: {style}")
+    if color:
+        lines.append(f"Color: {color}")
+    if shopping:
+        lines.append(f"Shopping: {shopping}")
+    if highlight:
+        lines.append(f"Focus: {highlight}")
+    if note:
+        lines.append(f"Note: {note}")
+    return "\n".join(lines)
+
+
 @app.route('/')
 def serve_frontend():
     return send_from_directory(os.getcwd(), 'artizia.html')
@@ -616,22 +682,446 @@ def update_session_feedback(session_id, turn_index):
         elif feedback not in ("up", "down"):
             return jsonify({'error': 'feedback must be "up" or "down".'}), 400
 
+        voter_id = normalize_uuid(data.get('voterId') or data.get('voter_id'))
+
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE session_turns
-                    SET feedback = %s
-                    WHERE session_id = %s AND turn_index = %s
-                    """,
-                    (feedback, normalized_session_id, turn_index),
-                )
-                if cur.rowcount == 0:
-                    return jsonify({'error': 'Session turn not found.'}), 404
+                if voter_id:
+                    cur.execute(
+                        """
+                        SELECT 1 FROM session_turns
+                        WHERE session_id = %s AND turn_index = %s
+                        """,
+                        (normalized_session_id, turn_index),
+                    )
+                    if cur.fetchone() is None:
+                        return jsonify({'error': 'Session turn not found.'}), 404
+                    if feedback is None:
+                        cur.execute(
+                            """
+                            DELETE FROM session_turn_votes
+                            WHERE session_id = %s AND turn_index = %s AND voter_id = %s
+                            """,
+                            (normalized_session_id, turn_index, voter_id),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO session_turn_votes (session_id, turn_index, voter_id, vote, updated_at)
+                            VALUES (%s, %s, %s, %s, now())
+                            ON CONFLICT (session_id, turn_index, voter_id) DO UPDATE SET
+                                vote = EXCLUDED.vote,
+                                updated_at = now()
+                            """,
+                            (normalized_session_id, turn_index, voter_id, feedback),
+                        )
+
+                    cur.execute(
+                        """
+                        SELECT feedback
+                        FROM session_turns
+                        WHERE session_id = %s AND turn_index = %s
+                        """,
+                        (normalized_session_id, turn_index),
+                    )
+                    session_feedback_row = cur.fetchone()
+                    session_feedback = session_feedback_row[0] if session_feedback_row else None
+
+                    cur.execute(
+                        """
+                        SELECT
+                            COALESCE(SUM(CASE WHEN vote = 'up' THEN 1 ELSE 0 END), 0) AS up_votes,
+                            COALESCE(SUM(CASE WHEN vote = 'down' THEN 1 ELSE 0 END), 0) AS down_votes
+                        FROM session_turn_votes
+                        WHERE session_id = %s AND turn_index = %s
+                        """,
+                        (normalized_session_id, turn_index),
+                    )
+                    totals_row = cur.fetchone()
+                    up_votes = totals_row[0] if totals_row else 0
+                    down_votes = totals_row[1] if totals_row else 0
+                    total_up = up_votes + (1 if session_feedback == "up" else 0)
+                    total_down = down_votes + (1 if session_feedback == "down" else 0)
+
+                    return jsonify(
+                        {
+                            "success": True,
+                            "upVotes": int(total_up),
+                            "downVotes": int(total_down),
+                            "viewerFeedback": feedback or "",
+                        }
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE session_turns
+                        SET feedback = %s
+                        WHERE session_id = %s AND turn_index = %s
+                        """,
+                        (feedback, normalized_session_id, turn_index),
+                    )
+                    if cur.rowcount == 0:
+                        return jsonify({'error': 'Session turn not found.'}), 404
 
         return jsonify({'success': True})
     except Exception as e:
         logger.exception("Session feedback update error")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sessions/<session_id>/chips', methods=['POST'])
+def generate_session_chips(session_id):
+    if not DATABASE_URL:
+        return jsonify({'error': 'Database not configured.'}), 500
+    if not gemini_client:
+        return jsonify({'error': 'Gemini client not initialized (API key missing)'}), 500
+    normalized_session_id = normalize_session_id(session_id)
+    if not normalized_session_id:
+        return jsonify({'error': 'Invalid session id.'}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+        turn_index_raw = data.get('turnIndex') if 'turnIndex' in data else data.get('turn_index')
+        try:
+            turn_index = int(turn_index_raw)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'turnIndex must be an integer.'}), 400
+        if turn_index < 0:
+            return jsonify({'error': 'turnIndex must be >= 0.'}), 400
+
+        preferences, _system_prompt = fetch_session_preferences(normalized_session_id)
+        if preferences is None:
+            return jsonify({'error': 'Session not found.'}), 404
+
+        conversation_history = data.get('conversationHistory') or data.get('conversation_history')
+        if not isinstance(conversation_history, list):
+            conversation_history = fetch_session_turns(normalized_session_id)
+
+        if len(conversation_history) > 6:
+            conversation_history = conversation_history[-6:]
+
+        history_text = ""
+        for i, exchange in enumerate(conversation_history, 1):
+            user_msg = exchange.get('user', '')
+            assistant_response = exchange.get('assistant', {})
+            history_text += f"--- Exchange {i} ---\n"
+            history_text += f"User: {user_msg}\n"
+            history_text += f"Recommendation: {json.dumps(assistant_response, indent=2)}\n\n"
+
+        system_context_lines = []
+
+        client_time = data.get('clientTime') or data.get('client_time') or {}
+        if not isinstance(client_time, dict):
+            client_time = {}
+        client_local_datetime = str(
+            client_time.get('localDateTime')
+            or client_time.get('local_date_time')
+            or data.get('clientLocalDateTime')
+            or data.get('client_local_date_time')
+            or ''
+        ).strip()
+        client_timezone = str(
+            client_time.get('timezone')
+            or data.get('clientTimezone')
+            or data.get('client_timezone')
+            or ''
+        ).strip()
+        client_locale = str(
+            client_time.get('locale')
+            or data.get('clientLocale')
+            or data.get('client_locale')
+            or ''
+        ).strip()
+
+        if client_local_datetime:
+            if client_timezone:
+                system_context_lines.append(
+                    f"User local datetime: {client_local_datetime} ({client_timezone})"
+                )
+            else:
+                system_context_lines.append(f"User local datetime: {client_local_datetime}")
+        elif client_timezone:
+            system_context_lines.append(f"User timezone: {client_timezone}")
+
+        if client_locale:
+            system_context_lines.append(f"User locale: {client_locale}")
+
+        client_location = data.get('clientLocation') or data.get('client_location') or {}
+        if not isinstance(client_location, dict):
+            client_location = {}
+
+        zip_code = str(
+            client_location.get('zipCode')
+            or client_location.get('zip_code')
+            or client_location.get('postalCode')
+            or client_location.get('postal_code')
+            or ''
+        ).strip()
+
+        latitude = safe_float(client_location.get('latitude') or client_location.get('lat'))
+        longitude = safe_float(
+            client_location.get('longitude')
+            or client_location.get('lon')
+            or client_location.get('lng')
+        )
+
+        pref_location = {}
+        if isinstance(preferences, dict):
+            if not zip_code:
+                zip_code = str(
+                    preferences.get('zipCode')
+                    or preferences.get('zip_code')
+                    or ''
+                ).strip()
+            pref_location = (
+                preferences.get('location')
+                if isinstance(preferences.get('location'), dict)
+                else {}
+            )
+            if latitude is None:
+                latitude = safe_float(
+                    pref_location.get('latitude')
+                    or preferences.get('latitude')
+                    or preferences.get('lat')
+                )
+            if longitude is None:
+                longitude = safe_float(
+                    pref_location.get('longitude')
+                    or preferences.get('longitude')
+                    or preferences.get('lon')
+                    or preferences.get('lng')
+                )
+
+        if zip_code:
+            system_context_lines.append(f"User zip code: {zip_code}")
+
+        geo_result = None
+        if (latitude is None or longitude is None) and zip_code:
+            language_hint = client_locale.split("-")[0] if client_locale else "en"
+            geo_result = geocode_zip(zip_code, language=language_hint)
+            if geo_result:
+                latitude = geo_result.get("latitude")
+                longitude = geo_result.get("longitude")
+
+        use_imperial = True
+        if client_locale:
+            use_imperial = client_locale.lower().startswith("en-us")
+        if geo_result and geo_result.get("country_code") == "US":
+            use_imperial = True
+
+        weather_summary = fetch_current_weather(
+            latitude,
+            longitude,
+            use_imperial=use_imperial,
+        )
+        if weather_summary:
+            location_label_parts = []
+            if geo_result and isinstance(geo_result, dict):
+                name = geo_result.get("name")
+                admin1 = geo_result.get("admin1")
+                country = geo_result.get("country")
+                if name and admin1:
+                    location_label_parts.append(f"{name}, {admin1}")
+                elif name:
+                    location_label_parts.append(str(name))
+                elif admin1:
+                    location_label_parts.append(str(admin1))
+                if country:
+                    location_label_parts.append(str(country))
+            if zip_code:
+                location_label_parts.append(f"ZIP {zip_code}")
+            location_label = " 路 ".join([part for part in location_label_parts if part])
+            if location_label:
+                system_context_lines.append(
+                    f"Current weather ({location_label}): {weather_summary}"
+                )
+            else:
+                system_context_lines.append(f"Current weather: {weather_summary}")
+
+        profile_text = _build_chip_profile(preferences)
+        context_prompt = CHIPS_PROMPT.strip()
+        if profile_text:
+            context_prompt += f"\n\nUSER PROFILE:\n{profile_text}"
+        if system_context_lines:
+            context_prompt += "\n\nCONTEXT:\n" + "\n".join(f"- {line}" for line in system_context_lines)
+        if history_text:
+            context_prompt += "\n\nCONVERSATION HISTORY:\n" + history_text
+
+        response = gemini_client.models.generate_content(
+            model=CHIPS_MODEL,
+            contents=context_prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.6,
+                thinking_config=types.ThinkingConfig(
+                    include_thoughts=False,
+                    thinking_level="MINIMAL",
+                ),
+            ),
+        )
+
+        if not response or not response.candidates:
+            return jsonify({'error': 'No chips returned.'}), 500
+
+        raw_text = ""
+        for part in response.candidates[0].content.parts:
+            chunk_text = getattr(part, "text", None)
+            if chunk_text:
+                raw_text += chunk_text
+
+        cleaned = clean_jsonish_text(raw_text)
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return jsonify({'error': 'Invalid chips response.'}), 500
+
+        chips = payload.get("chips") if isinstance(payload, dict) else None
+        if not isinstance(chips, list):
+            return jsonify({'error': 'chips must be an array.'}), 500
+
+        normalized = []
+        seen = set()
+        for value in chips:
+            text = _normalize_chip_text(value)
+            if not text:
+                continue
+            if text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+
+        if len(normalized) < 3:
+            return jsonify({'error': 'chips must include 3 values.'}), 500
+
+        normalized = normalized[:3]
+        upsert_session_chips(normalized_session_id, turn_index, normalized)
+
+        return jsonify({'chips': normalized})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/community/looks', methods=['GET'])
+def fetch_community_looks():
+    if not DATABASE_URL:
+        return jsonify({'error': 'Database not configured.'}), 500
+    try:
+        voter_id = normalize_uuid(request.args.get('voterId') or request.args.get('voter_id'))
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH vote_totals AS (
+                        SELECT
+                            session_id,
+                            turn_index,
+                            COALESCE(SUM(CASE WHEN vote = 'up' THEN 1 ELSE 0 END), 0) AS up_votes,
+                            COALESCE(SUM(CASE WHEN vote = 'down' THEN 1 ELSE 0 END), 0) AS down_votes
+                        FROM session_turn_votes
+                        GROUP BY session_id, turn_index
+                    ),
+                    viewer_vote AS (
+                        SELECT session_id, turn_index, vote AS viewer_vote
+                        FROM session_turn_votes
+                        WHERE voter_id = %s
+                    ),
+                    ranked AS (
+                        SELECT
+                            st.session_id,
+                            st.turn_index,
+                            st.feedback,
+                            st.image_url,
+                            st.image_key,
+                            st.created_at,
+                            COALESCE(vt.up_votes, 0) AS up_votes,
+                            COALESCE(vt.down_votes, 0) AS down_votes,
+                            COALESCE(vt.up_votes, 0) + CASE WHEN st.feedback = 'up' THEN 1 ELSE 0 END AS total_up,
+                            COALESCE(vt.down_votes, 0) + CASE WHEN st.feedback = 'down' THEN 1 ELSE 0 END AS total_down,
+                            vv.viewer_vote
+                        FROM session_turns st
+                        LEFT JOIN vote_totals vt
+                            ON vt.session_id = st.session_id AND vt.turn_index = st.turn_index
+                        LEFT JOIN viewer_vote vv
+                            ON vv.session_id = st.session_id AND vv.turn_index = st.turn_index
+                        WHERE (st.image_url IS NOT NULL OR st.image_key IS NOT NULL)
+                    ),
+                    top_three AS (
+                        SELECT *
+                        FROM ranked
+                        ORDER BY total_up DESC, total_down ASC, created_at DESC
+                        LIMIT 3
+                    ),
+                    random_three AS (
+                        SELECT *
+                        FROM ranked
+                        WHERE (session_id, turn_index) NOT IN (
+                            SELECT session_id, turn_index FROM top_three
+                        )
+                        AND (
+                            (total_up = 0 AND total_down = 0)
+                            OR (total_up::numeric >= 1.5 * total_down)
+                        )
+                        ORDER BY random()
+                        LIMIT 3
+                    )
+                    SELECT
+                        session_id,
+                        turn_index,
+                        feedback,
+                        image_url,
+                        image_key,
+                        created_at,
+                        up_votes,
+                        down_votes,
+                        total_up,
+                        total_down,
+                        viewer_vote
+                    FROM top_three
+                    UNION ALL
+                    SELECT
+                        session_id,
+                        turn_index,
+                        feedback,
+                        image_url,
+                        image_key,
+                        created_at,
+                        up_votes,
+                        down_votes,
+                        total_up,
+                        total_down,
+                        viewer_vote
+                    FROM random_three
+                    """
+                    ,
+                    (voter_id,)
+                )
+                rows = cur.fetchall()
+
+        looks = []
+        for session_id, turn_index, feedback, image_url, image_key, created_at, up_votes, down_votes, total_up, total_down, viewer_vote in rows:
+            resolved_url = None
+            if image_key:
+                try:
+                    resolved_url = build_signed_r2_url(image_key)
+                except Exception:
+                    resolved_url = build_r2_url(image_key)
+            if not resolved_url:
+                resolved_url = image_url
+            if not resolved_url:
+                continue
+            looks.append(
+                {
+                    "sessionId": str(session_id),
+                    "turnIndex": int(turn_index),
+                    "imageUrl": resolved_url,
+                    "feedback": feedback or "",
+                    "upVotes": int(total_up or 0),
+                    "downVotes": int(total_down or 0),
+                    "viewerFeedback": viewer_vote or "",
+                }
+            )
+
+        return jsonify({"looks": looks})
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 

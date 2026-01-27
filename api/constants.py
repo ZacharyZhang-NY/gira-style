@@ -6,6 +6,7 @@ MY_LIST = "128522, 129668"
 IMG_GEN_MODEL = "gemini-3-pro-image-preview"
 RECOMMENDATION_MODEL = "gemini-3-flash-preview"
 VIDEO_GEN_MODEL = "veo-3.1-fast-generate-preview"
+CHIPS_MODEL = "gemini-3-flash-preview"
 
 # Google File Search Store Configuration
 FILE_SEARCH_STORE = "fileSearchStores/gira-style-hackathonaritzia-qegz3krvdqkv"
@@ -52,6 +53,17 @@ CHIP_CATEGORIES = {
 
 # Flattened list for convenience where a single list is needed.
 CHIPS = [chip for chips in CHIP_CATEGORIES.values() for chip in chips]
+
+CHIPS_PROMPT = """
+You are Gira, a personal stylist. Generate exactly 3 short suggestion chips the user can tap next.
+
+Rules:
+- Return ONLY valid JSON: {"chips": ["...", "...", "..."]}.
+- Each chip must be a concise styling request (6-60 characters).
+- Use the user's preferences, weather, time, and conversation history.
+- Keep chips distinct and specific (no duplicates).
+- Do not mention JSON, policies, or that you are an AI.
+"""
 
 user_style = ""
 user_color = ""

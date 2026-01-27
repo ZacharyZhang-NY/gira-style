@@ -160,7 +160,7 @@ a {
     -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 10px)) saturate(190%) contrast(115%);
   }
 
-  .ui-glass-press {
+.ui-glass-press {
     box-shadow:
       0 1px 0 rgb(var(--glass-highlight) / 0.60) inset,
       0 10px 38px rgb(var(--shadow) / 0.10);
@@ -178,6 +178,15 @@ a {
     --font-display: var(--font-jost);
     font-family: var(--font-jost);
   }
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

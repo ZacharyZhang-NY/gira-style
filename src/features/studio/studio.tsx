@@ -22,16 +22,21 @@ import { STORAGE_KEYS } from "@/lib/storageKeys";
 
 import {
   createSession,
+  fetchCommunityLooks,
   fetchRecommendation,
+  generateSessionChips,
   generateImage,
   generateVideo,
   logSessionTurn,
+  updateCommunityFeedback,
 } from "./api";
+import { CommunityLooks } from "./components/community-looks";
 import { MotionPreview } from "./components/motion-preview";
 import { OutfitPreview } from "./components/outfit-preview";
 import { ProductGrid } from "./components/product-grid";
 import { ChatPanel } from "./components/chat-panel";
 import type {
+  CommunityLook,
   RecommendationPayload,
   StudioState,
   StudioVersion,
@@ -41,6 +46,10 @@ type StoredColdStart = {
   answers: ColdStartAnswers;
   updatedAt: string;
   sessionId?: string;
+};
+type StoredCommunityVoter = {
+  id: string;
+  updatedAt: string;
 };
 
 const EMPTY_STUDIO_STATE: StudioState = {
@@ -71,6 +80,46 @@ function getOutfitItems(payload: RecommendationPayload) {
     return payload.outfit;
   if (Array.isArray(payload.accessories)) return payload.accessories;
   return [];
+}
+
+function mergeCommunityLooks(
+  prev: CommunityLook[],
+  next: CommunityLook[],
+): CommunityLook[] {
+  if (!prev.length) return next;
+  const prevMap = new Map(
+    prev.map((item) => [`${item.sessionId}:${item.turnIndex}`, item]),
+  );
+  const nextMap = new Map(
+    next.map((item) => [`${item.sessionId}:${item.turnIndex}`, item]),
+  );
+
+  const mergeItem = (item: CommunityLook) => {
+    const key = `${item.sessionId}:${item.turnIndex}`;
+    const existing = prevMap.get(key);
+    if (!existing) return item;
+    return {
+      ...item,
+      imageUrl: existing.imageUrl || item.imageUrl,
+      viewerFeedback: item.viewerFeedback ?? existing.viewerFeedback ?? "",
+    };
+  };
+
+  const merged = prev.map((item) => {
+    const key = `${item.sessionId}:${item.turnIndex}`;
+    return mergeItem(nextMap.get(key) ?? item);
+  });
+
+  if (merged.length >= 6) return merged;
+
+  for (const item of next) {
+    const key = `${item.sessionId}:${item.turnIndex}`;
+    if (prevMap.has(key)) continue;
+    merged.push(item);
+    if (merged.length >= 6) break;
+  }
+
+  return merged;
 }
 
 function normalizeMultiSelect(value: unknown) {
@@ -162,6 +211,26 @@ function createLocalSessionId() {
     return crypto.randomUUID();
   }
   return `session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function createLocalVoterId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `voter_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function getCommunityVoterId() {
+  const stored = readLocalStorageJson<StoredCommunityVoter>(
+    STORAGE_KEYS.communityVoter,
+  );
+  if (stored?.id) return stored.id;
+  const id = createLocalVoterId();
+  writeLocalStorageJson(STORAGE_KEYS.communityVoter, {
+    id,
+    updatedAt: new Date().toISOString(),
+  });
+  return id;
 }
 
 function formatError(error: unknown, fallback: string) {
@@ -273,7 +342,21 @@ function VersionOutput({
   );
 }
 
-export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
+type ConversationTurn = {
+  user: string;
+  assistant: RecommendationPayload;
+};
+
+function buildConversationHistory(versions: StudioVersion[]): ConversationTurn[] {
+  return versions
+    .filter(
+      (v): v is StudioVersion & { recommendation: RecommendationPayload } =>
+        Boolean(v.recommendation),
+    )
+    .map((v) => ({ user: v.request, assistant: v.recommendation }));
+}
+
+export function Studio() {
   const router = useRouter();
 
   const [hydrated, setHydrated] = React.useState(false);
@@ -283,6 +366,12 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
   const [state, setState] = React.useState<StudioState>(EMPTY_STUDIO_STATE);
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [videoEnabled, setVideoEnabled] = React.useState(true);
+  const [communityLooks, setCommunityLooks] = React.useState<CommunityLook[]>([]);
+  const [communityVoterId, setCommunityVoterId] = React.useState<string | null>(
+    null,
+  );
+  const [chips, setChips] = React.useState<string[]>([]);
+  const [chipsHidden, setChipsHidden] = React.useState(false);
   const videoEnabledRef = React.useRef(videoEnabled);
   const runTokenRef = React.useRef(0);
   const abortRef = React.useRef<AbortController | null>(null);
@@ -353,6 +442,48 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
 
     setHydrated(true);
   }, []);
+
+  React.useEffect(() => {
+    if (!hydrated) return;
+    setCommunityVoterId(getCommunityVoterId());
+  }, [hydrated]);
+
+  React.useEffect(() => {
+    if (!communityVoterId) return;
+    const controller = new AbortController();
+    fetchCommunityLooks({ signal: controller.signal, voterId: communityVoterId })
+      .then((looks) =>
+        setCommunityLooks((prev) => mergeCommunityLooks(prev, looks)),
+      )
+      .catch(() => {});
+    return () => controller.abort();
+  }, [communityVoterId]);
+
+  React.useEffect(() => {
+    if (!hydrated || !sessionReady || !sessionId) return;
+    const controller = new AbortController();
+    const history = buildConversationHistory(versionsRef.current);
+    const turnIndex = history.length ? history.length : 0;
+    generateSessionChips(sessionId, turnIndex, history, {
+      signal: controller.signal,
+    })
+      .then((nextChips) => setChips(nextChips))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [hydrated, sessionReady, sessionId]);
+
+  React.useEffect(() => {
+    if (!state.versions.length) {
+      setChipsHidden(false);
+      return;
+    }
+    const latest = state.versions[state.versions.length - 1];
+    const hasImage =
+      latest.stages.a === "done" && latest.stages.b === "done";
+    if (!isGenerating || hasImage) {
+      setChipsHidden(false);
+    }
+  }, [isGenerating, state.versions]);
 
   React.useEffect(() => {
     if (!hydrated) return;
@@ -478,12 +609,7 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
         updatedAt: new Date().toISOString(),
       });
 
-      const history = previous
-        .filter(
-          (v): v is StudioVersion & { recommendation: RecommendationPayload } =>
-            Boolean(v.recommendation),
-        )
-        .map((v) => ({ user: v.request, assistant: v.recommendation }));
+      const history = buildConversationHistory(previous);
 
       let stage: "a" | "b" | "c" = "a";
       const isStale = () => runTokenRef.current !== runToken;
@@ -514,6 +640,10 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
         }));
 
         if (sessionReady && sessionId) {
+          const nextHistory = [
+            ...history,
+            { user: trimmed, assistant: recommendation },
+          ];
           void logSessionTurn(sessionId, {
             turnIndex: versionNumber,
             userMessage: trimmed,
@@ -521,9 +651,14 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
             imageData: null,
             videoData: null,
             videoUri: null,
-          }).catch((error) => {
-            console.warn("Session logging failed:", error);
-          });
+          })
+            .then(() =>
+              generateSessionChips(sessionId, versionNumber, nextHistory),
+            )
+            .then((nextChips) => setChips(nextChips))
+            .catch((error) => {
+              console.warn("Session logging failed:", error);
+            });
         }
 
         stage = "b";
@@ -662,6 +797,52 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
     }).catch(() => {});
   }
 
+  const handleCommunityFeedback = React.useCallback(
+    (look: CommunityLook, value: "up" | "down") => {
+      const voterId = communityVoterId ?? getCommunityVoterId();
+      setCommunityLooks((prev) =>
+        prev.map((item) => {
+          if (
+            item.sessionId !== look.sessionId ||
+            item.turnIndex !== look.turnIndex
+          ) {
+            return item;
+          }
+          const previous = item.viewerFeedback ?? "";
+          let upVotes = item.upVotes ?? 0;
+          let downVotes = item.downVotes ?? 0;
+          if (previous === "up") upVotes = Math.max(0, upVotes - 1);
+          if (previous === "down") downVotes = Math.max(0, downVotes - 1);
+          if (value === "up") upVotes += 1;
+          if (value === "down") downVotes += 1;
+          return { ...item, viewerFeedback: value, upVotes, downVotes };
+        }),
+      );
+      void updateCommunityFeedback(look.sessionId, look.turnIndex, value, voterId)
+        .then((payload) => {
+          if (!payload) return;
+          setCommunityLooks((prev) =>
+            prev.map((item) => {
+              if (
+                item.sessionId !== look.sessionId ||
+                item.turnIndex !== look.turnIndex
+              ) {
+                return item;
+              }
+              return {
+                ...item,
+                viewerFeedback: payload.viewerFeedback ?? item.viewerFeedback ?? "",
+                upVotes: payload.upVotes ?? item.upVotes ?? 0,
+                downVotes: payload.downVotes ?? item.downVotes ?? 0,
+              };
+            }),
+          );
+        })
+        .catch(() => {});
+    },
+    [communityVoterId],
+  );
+
   const messages = React.useMemo(() => {
     const base = [
       {
@@ -793,12 +974,10 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
           <div className="col-span-12 lg:col-span-8 hidden lg:block">
             <div className="space-y-10">
               {!versions.length ? (
-                <Surface className="p-8 sm:p-10">
-                  <p className="text-sm leading-relaxed text-muted">
-                    Ask for a look in the chat, and your versions will appear
-                    here.
-                  </p>
-                </Surface>
+                <CommunityLooks
+                  looks={communityLooks}
+                  onFeedback={handleCommunityFeedback}
+                />
               ) : (
                 versions.map((version, index) => {
                   const isLast = index === versions.length - 1;
@@ -822,7 +1001,8 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
               disableVideoToggle={isGenerating || !hydrated}
               videoEnabled={videoEnabled}
               messages={messages}
-              chips={initialChips}
+              chips={chips}
+              chipsVisible={!chipsHidden && chips.length > 0}
               mobileOutputs={Object.fromEntries(
                 versions.map((version) => [
                   version.id,
@@ -833,6 +1013,15 @@ export function Studio({ initialChips = [] }: { initialChips?: string[] }) {
                   />,
                 ]),
               )}
+              onChipSelect={() => setChipsHidden(true)}
+              mobileIntroContent={
+                !versions.length ? (
+                  <CommunityLooks
+                    looks={communityLooks}
+                    onFeedback={handleCommunityFeedback}
+                  />
+                ) : null
+              }
               onSubmitRequest={runSequence}
               onInterrupt={interruptGeneration}
               onToggleVideo={handleToggleVideo}
