@@ -1,6 +1,8 @@
 Flask
 flask-cors
+flask-sock
 google-genai
 python-dotenv
 psycopg2-binary
 boto3
+google-cloud-speech

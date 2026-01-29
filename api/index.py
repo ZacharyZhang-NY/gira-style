@@ -9,8 +9,10 @@ import urllib.request
 import urllib.parse
 import uuid
 import random
+import asyncio
 
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
+from flask_sock import Sock
 from flask_cors import CORS
 from google import genai
 from google.genai import types
@@ -50,6 +52,7 @@ from api.constants import (
     FILE_SEARCH_STORE,
     VIDEO_GEN_MODEL,
     VIDOE_GENERATION_PROMPT,
+    STYLE_INVESTIGATOR_INSTRUCTION,
 )
 
 # Configure logging
@@ -62,6 +65,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')
 CORS(app, resources={r"/api/*": {"origins": CORS_ORIGINS}})
+sock = Sock(app)
 
 # Initialize Gemini client
 ALLOWED_IMAGE_MIME_TYPES = ('image/png', 'image/jpeg', 'image/webp')
@@ -84,6 +88,16 @@ R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "")
 _r2_client = None
 _chat_cache = {}
 _weather_cache = {}
+
+BEGIN_PAYLOAD = "---BEGIN_STYLE_PAYLOAD---"
+END_PAYLOAD = "---END_STYLE_PAYLOAD---"
+DEFAULT_LIVE_MODEL_ID = os.getenv(
+    "LIVE_MODEL_ID",
+    "models/gemini-2.5-flash-native-audio-preview-12-2025",
+)
+DEFAULT_LIVE_MODALITIES = ["AUDIO"]
+DEFAULT_LIVE_API_VERSION = os.getenv("LIVE_API_VERSION", "v1beta")
+DEFAULT_LIVE_VOICE = os.getenv("LIVE_VOICE", "Zephyr")
 
 WEATHER_CACHE_TTL_SECONDS = float(os.getenv('WEATHER_CACHE_TTL_SECONDS', '600'))
 WEATHER_CACHE_MAX_ENTRIES = int(os.getenv('WEATHER_CACHE_MAX_ENTRIES', '200'))
@@ -511,7 +525,6 @@ def fetch_session_turns(session_id):
         history.append({"user": user_message, "assistant": response_payload})
     return history
 
-
 def upsert_session_chips(session_id, turn_index, chips):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -563,9 +576,311 @@ def _build_chip_profile(preferences):
     return "\n".join(lines)
 
 
+def _load_live_api_key():
+    try:
+        from api.env import api_key
+        return api_key
+    except Exception:
+        try:
+            from env import api_key
+            return api_key
+        except Exception:
+            return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _parse_data_url(data_url: str):
+    if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:"):
+        return None, None
+    header, encoded = data_url.split(",", 1)
+    mime_type = header.split(":")[1].split(";")[0] if ":" in header else "application/octet-stream"
+    try:
+        return mime_type, base64.b64decode(encoded)
+    except Exception:
+        return None, None
+
+
+def _coerce_message(raw):
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode("utf-8")
+        except Exception:
+            return None
+    if not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        return {"type": "input_text", "text": raw}
+    return None
+
+
+async def _send_json(ws, payload):
+    try:
+        await asyncio.to_thread(ws.send, json.dumps(payload))
+    except Exception:
+        return
+
+
+async def _close_ws(ws):
+    try:
+        await asyncio.to_thread(ws.close)
+    except Exception:
+        return
+
+
+async def _send_live_input(session, payload, end_of_turn=True):
+    if isinstance(payload, dict) and payload.get("data") is not None:
+        if hasattr(session, "send_realtime_input") and not end_of_turn:
+            await session.send_realtime_input(input=payload)
+            return
+        if hasattr(session, "send"):
+            await session.send(input=payload, end_of_turn=end_of_turn)
+            return
+        part = types.Part.from_bytes(
+            data=payload.get("data"),
+            mime_type=payload.get("mime_type") or "application/octet-stream",
+        )
+        await session.send_client_content(
+            turns=[types.Content(role="user", parts=[part])],
+            turn_complete=end_of_turn,
+        )
+        return
+    if hasattr(session, "send"):
+        await session.send(input=payload, end_of_turn=end_of_turn)
+        return
+    if isinstance(payload, str):
+        part = types.Part(text=payload)
+    else:
+        part = types.Part(text=str(payload))
+    await session.send_client_content(
+        turns=[types.Content(role="user", parts=[part])],
+        turn_complete=end_of_turn,
+    )
+
+
+async def _handle_client_message(session, ws, message):
+    msg_type = message.get("type")
+    if msg_type == "config":
+        await _send_json(ws, {"type": "error", "message": "Config can only be set on the first message."})
+        return True
+
+    if msg_type == "control":
+        if message.get("action") in ("close", "stop", "end"):
+            return False
+        return True
+
+    if msg_type == "input_text":
+        await _send_json(ws, {"type": "error", "message": "Audio input only. Use type=input_audio."})
+        return True
+
+    if msg_type == "input_audio":
+        audio_data = message.get("audio")
+        mime_type = message.get("mime_type")
+        if isinstance(audio_data, str) and audio_data.startswith("data:"):
+            mime_type, audio_bytes = _parse_data_url(audio_data)
+        else:
+            audio_bytes = None
+            if isinstance(audio_data, str):
+                try:
+                    audio_bytes = base64.b64decode(audio_data)
+                except Exception:
+                    audio_bytes = None
+        if not audio_bytes:
+            await _send_json(ws, {"type": "error", "message": "Invalid audio payload."})
+            return True
+        end_of_turn = message.get("end_of_turn")
+        if end_of_turn is None:
+            end_of_turn = False
+        await _send_live_input(
+            session,
+            {
+                "data": audio_bytes,
+                "mime_type": mime_type or "audio/pcm",
+            },
+            end_of_turn=bool(end_of_turn),
+        )
+        return True
+
+    return True
+
+
+async def _handle_live_session(ws, api_key: str):
+    client = genai.Client(api_key=api_key, http_options={"api_version": DEFAULT_LIVE_API_VERSION})
+    session_config = {
+        "system_instruction": STYLE_INVESTIGATOR_INSTRUCTION,
+        "response_modalities": DEFAULT_LIVE_MODALITIES,
+    }
+    model_id = DEFAULT_LIVE_MODEL_ID
+    voice_name = DEFAULT_LIVE_VOICE
+
+    initial_raw = await asyncio.to_thread(ws.receive)
+    if initial_raw is None:
+        return
+    initial_msg = _coerce_message(initial_raw)
+    initial_user_message = None
+    if initial_msg and initial_msg.get("type") == "config":
+        model_override = initial_msg.get("model")
+        if isinstance(model_override, str) and model_override.strip():
+            model_id = model_override.strip()
+        modalities = initial_msg.get("response_modalities")
+        if isinstance(modalities, list) and modalities:
+            session_config["response_modalities"] = modalities
+        system_instruction = initial_msg.get("system_instruction")
+        if isinstance(system_instruction, str) and system_instruction.strip():
+            session_config["system_instruction"] = system_instruction.strip()
+        voice_override = initial_msg.get("voice")
+        if isinstance(voice_override, str) and voice_override.strip():
+            voice_name = voice_override.strip()
+    elif initial_msg:
+        initial_user_message = initial_msg
+
+    response_modalities = session_config["response_modalities"]
+    speech_config = None
+    if "AUDIO" in response_modalities:
+        speech_config = types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=voice_name
+                )
+            )
+        )
+
+    live_config = types.LiveConnectConfig(
+        response_modalities=response_modalities,
+        speech_config=speech_config,
+        context_window_compression=types.ContextWindowCompressionConfig(
+            trigger_tokens=25600,
+            sliding_window=types.SlidingWindow(target_tokens=12800),
+        ),
+        system_instruction=types.Content(
+            parts=[types.Part.from_text(text=session_config["system_instruction"])],
+            role="user",
+        ),
+    )
+
+    async with client.aio.live.connect(model=model_id, config=live_config) as session:
+        await _send_json(ws, {"type": "ready", "model": model_id})
+
+        payload_parts = []
+        payload_complete = False
+        in_payload = False
+        buffer = ""
+
+        async def handle_text_chunk(chunk: str):
+            nonlocal buffer, in_payload, payload_complete
+            if not chunk:
+                return
+            buffer += chunk
+            while buffer:
+                if not in_payload:
+                    begin_index = buffer.find(BEGIN_PAYLOAD)
+                    if begin_index == -1:
+                        safe_len = max(0, len(buffer) - (len(BEGIN_PAYLOAD) - 1))
+                        if safe_len:
+                            await _send_json(ws, {"type": "assistant_text", "text": buffer[:safe_len]})
+                            buffer = buffer[safe_len:]
+                        else:
+                            break
+                    else:
+                        if begin_index:
+                            await _send_json(ws, {"type": "assistant_text", "text": buffer[:begin_index]})
+                        buffer = buffer[begin_index + len(BEGIN_PAYLOAD):]
+                        in_payload = True
+                else:
+                    end_index = buffer.find(END_PAYLOAD)
+                    if end_index == -1:
+                        payload_parts.append(buffer)
+                        buffer = ""
+                    else:
+                        if end_index:
+                            payload_parts.append(buffer[:end_index])
+                        buffer = buffer[end_index + len(END_PAYLOAD):]
+                        payload_complete = True
+                        in_payload = False
+                        payload = "".join(payload_parts).strip()
+                        await _send_json(ws, {"type": "style_payload", "payload": payload})
+                        await _send_json(ws, {"type": "session_end", "reason": "style_payload_captured"})
+                        await _close_ws(ws)
+                        return
+
+        async def pump_from_client():
+            if initial_user_message:
+                await _handle_client_message(session, ws, initial_user_message)
+            while True:
+                raw = await asyncio.to_thread(ws.receive)
+                if raw is None:
+                    break
+                message = _coerce_message(raw)
+                if not message:
+                    continue
+                should_continue = await _handle_client_message(session, ws, message)
+                if not should_continue:
+                    break
+
+        async def pump_from_model():
+            try:
+                while True:
+                    turn = session.receive()
+                    async for response in turn:
+                        if getattr(response, "text", None):
+                            await handle_text_chunk(response.text)
+                            if payload_complete:
+                                return
+                        if getattr(response, "data", None):
+                            audio_bytes = response.data
+                            mime_type = getattr(response, "mime_type", None) or "audio/wav"
+                            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                            await _send_json(ws, {"type": "assistant_audio", "audio": audio_b64, "mime_type": mime_type})
+            except Exception:
+                async for message in session.receive():
+                    if not message or not getattr(message, "server_content", None):
+                        continue
+                    model_turn = message.server_content.model_turn
+                    if not model_turn or not model_turn.parts:
+                        continue
+                    for part in model_turn.parts:
+                        if getattr(part, "text", None):
+                            await handle_text_chunk(part.text)
+                            if payload_complete:
+                                return
+                        if getattr(part, "inline_data", None):
+                            audio_bytes = part.inline_data.data
+                            mime_type = part.inline_data.mime_type or "audio/wav"
+                            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                            await _send_json(ws, {"type": "assistant_audio", "audio": audio_b64, "mime_type": mime_type})
+
+        client_task = asyncio.create_task(pump_from_client())
+        model_task = asyncio.create_task(pump_from_model())
+
+        done, pending = await asyncio.wait(
+            [client_task, model_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+        if not payload_complete:
+            await _send_json(ws, {"type": "session_end", "reason": "client_closed"})
+            await _close_ws(ws)
+
+
 @app.route('/')
 def serve_frontend():
     return send_from_directory(os.getcwd(), 'artizia.html')
+
+
+@sock.route("/api/live")
+def live(ws):
+    api_key = _load_live_api_key()
+    if not api_key:
+        ws.send(json.dumps({"type": "error", "message": "Gemini API key not configured."}))
+        return
+    asyncio.run(_handle_live_session(ws, api_key))
 
 
 @app.route('/api/sessions', methods=['POST'])

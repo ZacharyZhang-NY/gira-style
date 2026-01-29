@@ -54,3 +54,6 @@ logs/
 
 # Old/Unused
 legacy/
+
+# SA
+service_account.json
