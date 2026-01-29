@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Live Audio Test</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 24px; }
+      button { margin-right: 8px; padding: 8px 12px; }
+      pre { background: #f5f5f5; padding: 12px; max-height: 240px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>Live Audio Test</h1>
+    <p>Click Start, speak, then Stop. Keep the API running and set the WebSocket URL below.</p>
+    <div>
+      <label for="wsUrl">WebSocket URL</label>
+      <input id="wsUrl" style="width: 420px" />
+      <button id="start">Start</button>
+      <button id="stop">Stop</button>
+    </div>
+    <h3>Logs</h3>
+    <pre id="log"></pre>
+
+    <script src="./live_browser_snippet.js"></script>
+    <script>
+      const logEl = document.getElementById("log");
+      function log(message) {
+        logEl.textContent += message + "\n";
+      }
+
+      const originalLog = console.log;
+      console.log = (...args) => {
+        log(args.join(" "));
+        originalLog(...args);
+      };
+
+      const originalError = console.error;
+      console.error = (...args) => {
+        log("ERROR: " + args.join(" "));
+        originalError(...args);
+      };
+
+      const wsUrlInput = document.getElementById("wsUrl");
+      const defaultWsUrl = (() => {
+        const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+        const host = window.location.hostname || "127.0.0.1";
+        // Codespaces forwarded ports use hostnames like:
+        // <name>-8000.app.github.dev. Map that to -5002 automatically.
+        const codespacesMatch = host.match(/^(.*)-8000\.app\.github\.dev$/);
+        if (codespacesMatch) {
+          return `${scheme}://${codespacesMatch[1]}-5002.app.github.dev/api/live`;
+        }
+        return `${scheme}://${host}:5002/api/live`;
+      })();
+      wsUrlInput.value = defaultWsUrl;
+
+      document.getElementById("start").addEventListener("click", () => {
+        window.LIVE_WS_URL = wsUrlInput.value;
+        if (window.startLive) {
+          window.startLive();
+          log("startLive() called");
+        } else {
+          log("startLive() not found");
+        }
+      });
+
+      document.getElementById("stop").addEventListener("click", () => {
+        if (window.stopLive) {
+          window.stopLive();
+          log("stopLive() called");
+        }
+      });
+    </script>
+  </body>
+</html>
