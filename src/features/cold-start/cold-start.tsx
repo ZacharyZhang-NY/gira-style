@@ -14,6 +14,7 @@ import { readLocalStorageJson, writeLocalStorageJson } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 import { ThemeToggle } from "@/features/theme/theme-toggle";
 import { createSession } from "@/features/studio/api";
+import { LiveAssistant } from "./live-assistant";
 import {
   COLD_START_QUESTIONS,
   EMPTY_COLD_START_ANSWERS,
@@ -127,6 +128,9 @@ export function ColdStart() {
   const [answers, setAnswers] = React.useState<ColdStartAnswers>(
     EMPTY_COLD_START_ANSWERS,
   );
+  const [startMode, setStartMode] = React.useState<
+    "choose" | "guide" | "live"
+  >("choose");
   const [stepIndex, setStepIndex] = React.useState(0);
   const [styleText, setStyleText] = React.useState("");
   const [error, setError] = React.useState("");
@@ -172,6 +176,8 @@ export function ColdStart() {
     return [];
   }, [answerValue, question]);
   const currentStep = Math.min(stepIndex + 1, totalSteps);
+  const showProgress =
+    startMode === "guide" || (startMode === "live" && stepIndex >= zipStepIndex);
 
   function setAnswer(nextValue: string) {
     setError("");
@@ -201,6 +207,10 @@ export function ColdStart() {
 
   function goBack() {
     setError("");
+    if (startMode === "guide" && stepIndex === 0) {
+      setStartMode("choose");
+      return;
+    }
     setStepIndex((i) => Math.max(0, i - 1));
   }
 
@@ -254,6 +264,21 @@ export function ColdStart() {
     }
   }
 
+  const handleLiveComplete = React.useCallback(
+    (payload: ColdStartAnswers) => {
+      setAnswers((prev) => ({
+        ...prev,
+        q1: payload.q1,
+        q2: payload.q2,
+        q3: payload.q3,
+        q4: payload.q4,
+      }));
+      setStartMode("guide");
+      setStepIndex(zipStepIndex);
+    },
+    [zipStepIndex],
+  );
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30">
@@ -280,24 +305,28 @@ export function ColdStart() {
                 <span className="italic">quiet confidence</span>.
               </h1>
 
-              <Surface tone="subtle" className="mt-8 p-6" aria-live="polite">
-                <div className="flex items-end justify-between gap-6">
-                  <div className="sr-only">Progress</div>
-                  <div className="text-xs font-semibold text-text sm:text-sm">
-                    {currentStep} / {totalSteps}
-                  </div>
-                </div>
-                <div
-                  className="mt-4 h-2 w-full rounded-full bg-glass-highlight/20"
-                  role="progressbar"
-                  aria-label="Quiz progress"
-                >
-                  <div
-                    className="h-2 rounded-full bg-gold transition-[width] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
-                    style={{ width: `${(currentStep / totalSteps) * 100}%` }}
-                  />
-                </div>
-              </Surface>
+                {showProgress ? (
+                  <Surface tone="subtle" className="mt-8 p-6" aria-live="polite">
+                    <div className="flex items-end justify-between gap-6">
+                      <div className="sr-only">Progress</div>
+                      <div className="text-xs font-semibold text-text sm:text-sm">
+                        {currentStep} / {totalSteps}
+                      </div>
+                    </div>
+                    <div
+                      className="mt-4 h-2 w-full rounded-full bg-glass-highlight/20"
+                      role="progressbar"
+                      aria-label="Quiz progress"
+                    >
+                      <div
+                        className="h-2 rounded-full bg-gold transition-[width] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+                        style={{
+                          width: `${(currentStep / totalSteps) * 100}%`,
+                        }}
+                      />
+                    </div>
+                  </Surface>
+                ) : null}
             </div>
           </div>
 
@@ -305,13 +334,17 @@ export function ColdStart() {
             <Surface className="p-8 sm:p-10">
               <AnimatePresence mode="wait">
                 <motion.section
-                  key={
-                    isStyleStep
-                      ? "style"
-                      : isZipStep
-                        ? "zip"
-                        : question?.id
-                  }
+                    key={
+                      startMode === "choose"
+                        ? "mode"
+                        : startMode === "live" && stepIndex < zipStepIndex
+                          ? "live"
+                          : isStyleStep
+                            ? "style"
+                            : isZipStep
+                              ? "zip"
+                              : question?.id
+                    }
                   initial={
                     shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 18 }
                   }
@@ -321,179 +354,200 @@ export function ColdStart() {
                   }
                   transition={transition}
                 >
-                  <div className="flex flex-wrap items-end justify-between gap-6">
-                    <div className="max-w-[60ch]">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-muted sm:text-[11px]">
-                        {isStyleStep
-                          ? "Your style"
-                          : isZipStep
-                            ? "Your location"
-                            : `Question ${stepIndex + 1}`}
+                  {startMode === "choose" ? (
+                    <div className="space-y-8">
+                      <div>
+                        <h2 className="mt-3 font-display text-xl leading-[1.2] tracking-tight text-text sm:text-3xl sm:leading-[1.15]">
+                          How would you like to begin?
+                        </h2>
                       </div>
-                      <h2 className="mt-3 font-display text-xl leading-[1.2] tracking-tight text-text sm:text-3xl sm:leading-[1.15]">
-                        {isStyleStep
-                          ? "Describe your style in one sentence."
-                          : isZipStep
-                            ? "What’s your zip code?"
-                          : question?.title}
-                      </h2>
-                      {!isStyleStep &&
-                      !isZipStep &&
-                      question?.multi &&
-                      question?.hint ? (
-                        <p className="mt-3 text-xs leading-relaxed text-muted sm:text-sm">
-                          {question.hint}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
 
-                  {isStyleStep ? (
-                    <div className="mt-8 space-y-3">
-                      <label
-                        htmlFor="styleText"
-                        className="text-[10px] font-semibold uppercase tracking-[0.3em] text-muted sm:text-[11px]"
-                      >
-                        Style note{" "}
-                        <span className="text-muted">(optional)</span>
-                      </label>
-                      <Textarea
-                        id="styleText"
-                        value={styleText}
-                        onChange={(e) => {
-                          setStyleText(e.target.value);
-                          setError("");
-                        }}
-                        rows={4}
-                        placeholder="Minimal, modern, tailored. Neutral palette, clean lines, subtle edge."
-                        className={cn(error && "border-gold")}
-                      />
-                    </div>
-                  ) : isZipStep ? (
-                    <div className="mt-8 space-y-4">
-                      <label
-                        htmlFor="zipCode"
-                        className="text-[10px] font-semibold uppercase tracking-[0.3em] text-muted sm:text-[11px]"
-                      >
-                        Zip code <span className="text-muted">(optional)</span>
-                      </label>
-                      <p className="text-xs leading-relaxed text-muted sm:text-sm">
-                        Used only to tailor fabrics and layering to your local
-                        weather.
-                      </p>
-                      <Textarea
-                        id="zipCode"
-                        value={answers.zipCode}
-                        onChange={(e) => {
-                          const nextZip = e.target.value;
-                          setAnswers((prev) => ({
-                            ...prev,
-                            zipCode: nextZip,
-                            location: { source: "manual" },
-                          }));
-                          setError("");
-                        }}
-                        rows={1}
-                        placeholder="e.g. 90210"
-                        className={cn("h-12", error && "border-gold")}
-                      />
-                      <div className="flex flex-wrap gap-3">
-                        <Button
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <button
                           type="button"
-                          tone="outline"
-                          onClick={async () => {
-                            if (isDetectingZip) return;
-                            if (
-                              typeof navigator === "undefined" ||
-                              !("geolocation" in navigator)
-                            ) {
-                              setError("Location isn’t available—type your zip code instead.");
-                              return;
-                            }
-                            setError("");
-                            setIsDetectingZip(true);
-                            try {
-                              const position = await new Promise<GeolocationPosition>(
-                                (resolve, reject) => {
-                                  navigator.geolocation.getCurrentPosition(
-                                    resolve,
-                                    reject,
-                                    {
-                                      enableHighAccuracy: false,
-                                      timeout: 10_000,
-                                      maximumAge: 60_000,
-                                    },
-                                  );
-                                },
-                              );
+                          onClick={() => setStartMode("live")}
+                          className={cn(
+                            "group flex h-full w-full flex-col items-start justify-between gap-6 rounded-2xl p-6 text-left",
+                            "ui-glass-subtle",
+                            "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                            "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
+                          )}
+                        >
+                          <div>
+                            <div className="font-display text-lg leading-tight tracking-tight text-text sm:text-2xl">
+                              Gira Live Sales Assistant
+                            </div>
+                          </div>
+                        </button>
 
-                              const latitude = position.coords.latitude;
-                              const longitude = position.coords.longitude;
+                        <button
+                          type="button"
+                          onClick={() => setStartMode("guide")}
+                          className={cn(
+                            "group flex h-full w-full flex-col items-start justify-between gap-6 rounded-2xl p-6 text-left",
+                            "ui-glass-subtle",
+                            "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                            "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
+                          )}
+                        >
+                          <div>
+                            <div className="font-display text-lg leading-tight tracking-tight text-text sm:text-2xl">
+                              Gira Sales Guide Questions
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  ) : startMode === "live" && stepIndex < zipStepIndex ? (
+                    <LiveAssistant
+                      onComplete={handleLiveComplete}
+                      onBack={() => setStartMode("choose")}
+                    />
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-end justify-between gap-6">
+                        <div className="max-w-[60ch]">
+                          <h2 className="mt-3 font-display text-xl leading-[1.2] tracking-tight text-text sm:text-3xl sm:leading-[1.15]">
+                            {isStyleStep
+                              ? "Describe your style in one sentence."
+                              : isZipStep
+                                ? "What’s your zip code?"
+                                : question?.title}
+                          </h2>
+                        </div>
+                      </div>
 
-                              const geoapifyKey =
-                                process.env.NEXT_PUBLIC_GEOAPIFY_API_KEY;
-                              if (!geoapifyKey) {
-                                throw new Error(
-                                  "Location lookup isn’t configured—type your zip code instead.",
-                                );
-                              }
-
-                              const resp = await fetch(
-                                `https://api.geoapify.com/v1/geocode/reverse?lat=${encodeURIComponent(
-                                  String(latitude),
-                                )}&lon=${encodeURIComponent(
-                                  String(longitude),
-                                )}&lang=en&limit=1&apiKey=${encodeURIComponent(
-                                  geoapifyKey,
-                                )}`,
-                              );
-                              if (!resp.ok) {
-                                throw new Error("Unable to detect zip code.");
-                              }
-                              const payload = (await resp.json()) as {
-                                features?: Array<{
-                                  properties?: { postcode?: unknown };
-                                }>;
-                              };
-                              const postcode =
-                                typeof payload.features?.[0]?.properties
-                                  ?.postcode === "string"
-                                  ? payload.features[0].properties.postcode.trim()
-                                  : "";
-                              if (!postcode) {
-                                throw new Error(
-                                  "We couldn’t detect a zip code for this location.",
-                                );
-                              }
-                              if (stepIndexRef.current !== zipStepIndex) {
-                                return;
-                              }
-
+                      {isStyleStep ? (
+                        <div className="mt-8 space-y-3">
+                          <Textarea
+                            id="styleText"
+                            aria-label="Style note (optional)"
+                            value={styleText}
+                            onChange={(e) => {
+                              setStyleText(e.target.value);
+                              setError("");
+                            }}
+                            rows={4}
+                            placeholder="Minimal, modern, tailored. Neutral palette, clean lines, subtle edge."
+                            className={cn(error && "border-gold")}
+                          />
+                        </div>
+                      ) : isZipStep ? (
+                        <div className="mt-8 space-y-4">
+                          <Textarea
+                            id="zipCode"
+                            aria-label="Zip code (optional)"
+                            value={answers.zipCode}
+                            onChange={(e) => {
+                              const nextZip = e.target.value;
                               setAnswers((prev) => ({
                                 ...prev,
-                                zipCode: postcode,
-                                location: {
-                                  latitude,
-                                  longitude,
-                                  source: "geolocation",
-                                },
+                                zipCode: nextZip,
+                                location: { source: "manual" },
                               }));
-                            } catch (err) {
-                              const message =
-                                err instanceof Error && err.message
-                                  ? err.message
-                                  : "We couldn’t detect your zip code—type it in instead.";
-                              setError(message);
-                            } finally {
-                              setIsDetectingZip(false);
-                            }
-                          }}
-                          isLoading={isDetectingZip}
-                          className="text-xs sm:text-sm"
-                        >
-                          Use my location
-                        </Button>
-                      </div>
+                              setError("");
+                            }}
+                            rows={1}
+                            placeholder="e.g. 90210"
+                            className={cn("h-12", error && "border-gold")}
+                          />
+                          <div className="flex flex-wrap gap-3">
+                            <Button
+                              type="button"
+                              tone="outline"
+                              onClick={async () => {
+                                if (isDetectingZip) return;
+                                if (
+                                  typeof navigator === "undefined" ||
+                                  !("geolocation" in navigator)
+                                ) {
+                                  setError("Location isn’t available—type your zip code instead.");
+                                  return;
+                                }
+                                setError("");
+                                setIsDetectingZip(true);
+                                try {
+                                  const position = await new Promise<GeolocationPosition>(
+                                    (resolve, reject) => {
+                                      navigator.geolocation.getCurrentPosition(
+                                        resolve,
+                                        reject,
+                                        {
+                                          enableHighAccuracy: false,
+                                          timeout: 10_000,
+                                          maximumAge: 60_000,
+                                        },
+                                      );
+                                    },
+                                  );
+
+                                  const latitude = position.coords.latitude;
+                                  const longitude = position.coords.longitude;
+
+                                  const geoapifyKey =
+                                    process.env.NEXT_PUBLIC_GEOAPIFY_API_KEY;
+                                  if (!geoapifyKey) {
+                                    throw new Error(
+                                      "Location lookup isn’t configured—type your zip code instead.",
+                                    );
+                                  }
+
+                                  const resp = await fetch(
+                                    `https://api.geoapify.com/v1/geocode/reverse?lat=${encodeURIComponent(
+                                      String(latitude),
+                                    )}&lon=${encodeURIComponent(
+                                      String(longitude),
+                                    )}&lang=en&limit=1&apiKey=${encodeURIComponent(
+                                      geoapifyKey,
+                                    )}`,
+                                  );
+                                  if (!resp.ok) {
+                                    throw new Error("Unable to detect zip code.");
+                                  }
+                                  const payload = (await resp.json()) as {
+                                    features?: Array<{
+                                      properties?: { postcode?: unknown };
+                                    }>;
+                                  };
+                                  const postcode =
+                                    typeof payload.features?.[0]?.properties
+                                      ?.postcode === "string"
+                                      ? payload.features[0].properties.postcode.trim()
+                                      : "";
+                                  if (!postcode) {
+                                    throw new Error(
+                                      "We couldn’t detect a zip code for this location.",
+                                    );
+                                  }
+                                  if (stepIndexRef.current !== zipStepIndex) {
+                                    return;
+                                  }
+
+                                  setAnswers((prev) => ({
+                                    ...prev,
+                                    zipCode: postcode,
+                                    location: {
+                                      latitude,
+                                      longitude,
+                                      source: "geolocation",
+                                    },
+                                  }));
+                                } catch (err) {
+                                  const message =
+                                    err instanceof Error && err.message
+                                      ? err.message
+                                      : "We couldn’t detect your zip code—type it in instead.";
+                                  setError(message);
+                                } finally {
+                                  setIsDetectingZip(false);
+                                }
+                              }}
+                              isLoading={isDetectingZip}
+                              className="text-xs sm:text-sm"
+                            >
+                              Use my location
+                            </Button>
+                          </div>
                     </div>
                   ) : (
                     <div className="mt-8 grid gap-4">
@@ -502,14 +556,6 @@ export function ColdStart() {
                             const isSelected = selectedValues.includes(
                               opt.value,
                             );
-                            const isQ2 = question.id === "q2";
-                            const showSubtitle = isQ2;
-                            let subtitle = opt.description;
-                            if (isQ2) {
-                              const [beforeAgent] =
-                                opt.description.split(/Agent mode:/i);
-                              subtitle = beforeAgent.trim();
-                            }
                             return (
                               <button
                                 key={opt.value}
@@ -527,11 +573,6 @@ export function ColdStart() {
                                   <div className="font-display text-lg leading-tight tracking-tight text-text sm:text-2xl">
                                     {opt.title}
                                   </div>
-                                  {showSubtitle && subtitle ? (
-                                    <div className="mt-2 text-xs leading-relaxed text-muted sm:text-sm">
-                                      {subtitle}
-                                    </div>
-                                  ) : null}
                                 </div>
 
                                 <div className="mt-1 flex items-center gap-4">
@@ -565,7 +606,6 @@ export function ColdStart() {
                     <Button
                       tone="ghost"
                       onClick={goBack}
-                      disabled={stepIndex === 0}
                       className="text-xs sm:text-sm"
                     >
                       Back
@@ -585,6 +625,8 @@ export function ColdStart() {
                       </Button>
                     )}
                   </div>
+                    </>
+                  )}
                 </motion.section>
               </AnimatePresence>
             </Surface>

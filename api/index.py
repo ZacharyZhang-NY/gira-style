@@ -16,6 +16,7 @@ from flask_sock import Sock
 from flask_cors import CORS
 from google import genai
 from google.genai import types
+from google.oauth2 import service_account
 from dotenv import load_dotenv
 import boto3
 from botocore.config import Config
@@ -588,6 +589,72 @@ def _load_live_api_key():
             return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 
+def _load_service_account_info():
+    raw_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if raw_json:
+        try:
+            info = json.loads(raw_json)
+            if isinstance(info, dict):
+                return info
+        except Exception:
+            pass
+
+    private_key = os.getenv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY") or ""
+    if private_key:
+        private_key = private_key.replace("\\n", "\n")
+
+    info = {
+        "type": os.getenv("GOOGLE_SERVICE_ACCOUNT_TYPE") or "service_account",
+        "project_id": os.getenv("GOOGLE_SERVICE_ACCOUNT_PROJECT_ID")
+        or os.getenv("GOOGLE_CLOUD_PROJECT"),
+        "private_key_id": os.getenv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID"),
+        "private_key": private_key,
+        "client_email": os.getenv("GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL"),
+        "client_id": os.getenv("GOOGLE_SERVICE_ACCOUNT_CLIENT_ID"),
+        "auth_uri": os.getenv("GOOGLE_SERVICE_ACCOUNT_AUTH_URI"),
+        "token_uri": os.getenv("GOOGLE_SERVICE_ACCOUNT_TOKEN_URI"),
+        "auth_provider_x509_cert_url": os.getenv(
+            "GOOGLE_SERVICE_ACCOUNT_AUTH_PROVIDER_CERT_URL"
+        ),
+        "client_x509_cert_url": os.getenv("GOOGLE_SERVICE_ACCOUNT_CLIENT_CERT_URL"),
+        "universe_domain": os.getenv("GOOGLE_SERVICE_ACCOUNT_UNIVERSE_DOMAIN"),
+    }
+
+    required = ("project_id", "private_key", "client_email", "token_uri")
+    if not all(info.get(key) for key in required):
+        return None
+    return info
+
+
+def _build_live_client():
+    api_key = _load_live_api_key()
+    if api_key:
+        return genai.Client(
+            api_key=api_key, http_options={"api_version": DEFAULT_LIVE_API_VERSION}
+        )
+    info = _load_service_account_info()
+    if not info:
+        return None
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or info.get("project_id")
+    if not project_id:
+        return None
+    location = (
+        os.getenv("GOOGLE_CLOUD_LOCATION")
+        or os.getenv("GOOGLE_CLOUD_REGION")
+        or "us-central1"
+    )
+    credentials = service_account.Credentials.from_service_account_info(
+        info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    return genai.Client(
+        vertexai=True,
+        credentials=credentials,
+        project=project_id,
+        location=location,
+        http_options={"api_version": DEFAULT_LIVE_API_VERSION},
+    )
+
+
 def _parse_data_url(data_url: str):
     if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:"):
         return None, None
@@ -709,8 +776,8 @@ async def _handle_client_message(session, ws, message):
     return True
 
 
-async def _handle_live_session(ws, api_key: str):
-    client = genai.Client(api_key=api_key, http_options={"api_version": DEFAULT_LIVE_API_VERSION})
+async def _handle_live_session(ws, client: genai.Client):
+    logger.info("Live session started")
     session_config = {
         "system_instruction": STYLE_INVESTIGATOR_INSTRUCTION,
         "response_modalities": DEFAULT_LIVE_MODALITIES,
@@ -720,7 +787,9 @@ async def _handle_live_session(ws, api_key: str):
 
     initial_raw = await asyncio.to_thread(ws.receive)
     if initial_raw is None:
+        logger.info("Live session closed before config message")
         return
+    logger.info("Live session initial message received: %s", type(initial_raw).__name__)
     initial_msg = _coerce_message(initial_raw)
     initial_user_message = None
     if initial_msg and initial_msg.get("type") == "config":
@@ -763,110 +832,117 @@ async def _handle_live_session(ws, api_key: str):
         ),
     )
 
-    async with client.aio.live.connect(model=model_id, config=live_config) as session:
-        await _send_json(ws, {"type": "ready", "model": model_id})
+    try:
+        async with client.aio.live.connect(model=model_id, config=live_config) as session:
+            await _send_json(ws, {"type": "ready", "model": model_id})
+            if not initial_user_message:
+                await _send_live_input(session, "Begin.", end_of_turn=True)
 
-        payload_parts = []
-        payload_complete = False
-        in_payload = False
-        buffer = ""
+            payload_parts = []
+            payload_complete = False
+            in_payload = False
+            buffer = ""
 
-        async def handle_text_chunk(chunk: str):
-            nonlocal buffer, in_payload, payload_complete
-            if not chunk:
-                return
-            buffer += chunk
-            while buffer:
-                if not in_payload:
-                    begin_index = buffer.find(BEGIN_PAYLOAD)
-                    if begin_index == -1:
-                        safe_len = max(0, len(buffer) - (len(BEGIN_PAYLOAD) - 1))
-                        if safe_len:
-                            await _send_json(ws, {"type": "assistant_text", "text": buffer[:safe_len]})
-                            buffer = buffer[safe_len:]
+            async def handle_text_chunk(chunk: str):
+                nonlocal buffer, in_payload, payload_complete
+                if not chunk:
+                    return
+                buffer += chunk
+                while buffer:
+                    if not in_payload:
+                        begin_index = buffer.find(BEGIN_PAYLOAD)
+                        if begin_index == -1:
+                            safe_len = max(0, len(buffer) - (len(BEGIN_PAYLOAD) - 1))
+                            if safe_len:
+                                await _send_json(ws, {"type": "assistant_text", "text": buffer[:safe_len]})
+                                buffer = buffer[safe_len:]
+                            else:
+                                break
                         else:
-                            break
+                            if begin_index:
+                                await _send_json(ws, {"type": "assistant_text", "text": buffer[:begin_index]})
+                            buffer = buffer[begin_index + len(BEGIN_PAYLOAD):]
+                            in_payload = True
                     else:
-                        if begin_index:
-                            await _send_json(ws, {"type": "assistant_text", "text": buffer[:begin_index]})
-                        buffer = buffer[begin_index + len(BEGIN_PAYLOAD):]
-                        in_payload = True
-                else:
-                    end_index = buffer.find(END_PAYLOAD)
-                    if end_index == -1:
-                        payload_parts.append(buffer)
-                        buffer = ""
-                    else:
-                        if end_index:
-                            payload_parts.append(buffer[:end_index])
-                        buffer = buffer[end_index + len(END_PAYLOAD):]
-                        payload_complete = True
-                        in_payload = False
-                        payload = "".join(payload_parts).strip()
-                        await _send_json(ws, {"type": "style_payload", "payload": payload})
-                        await _send_json(ws, {"type": "session_end", "reason": "style_payload_captured"})
-                        await _close_ws(ws)
-                        return
+                        end_index = buffer.find(END_PAYLOAD)
+                        if end_index == -1:
+                            payload_parts.append(buffer)
+                            buffer = ""
+                        else:
+                            if end_index:
+                                payload_parts.append(buffer[:end_index])
+                            buffer = buffer[end_index + len(END_PAYLOAD):]
+                            payload_complete = True
+                            in_payload = False
+                            payload = "".join(payload_parts).strip()
+                            await _send_json(ws, {"type": "style_payload", "payload": payload})
+                            await _send_json(ws, {"type": "session_end", "reason": "style_payload_captured"})
+                            await _close_ws(ws)
+                            return
 
-        async def pump_from_client():
-            if initial_user_message:
-                await _handle_client_message(session, ws, initial_user_message)
-            while True:
-                raw = await asyncio.to_thread(ws.receive)
-                if raw is None:
-                    break
-                message = _coerce_message(raw)
-                if not message:
-                    continue
-                should_continue = await _handle_client_message(session, ws, message)
-                if not should_continue:
-                    break
-
-        async def pump_from_model():
-            try:
+            async def pump_from_client():
+                if initial_user_message:
+                    await _handle_client_message(session, ws, initial_user_message)
                 while True:
-                    turn = session.receive()
-                    async for response in turn:
-                        if getattr(response, "text", None):
-                            await handle_text_chunk(response.text)
-                            if payload_complete:
-                                return
-                        if getattr(response, "data", None):
-                            audio_bytes = response.data
-                            mime_type = getattr(response, "mime_type", None) or "audio/wav"
-                            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-                            await _send_json(ws, {"type": "assistant_audio", "audio": audio_b64, "mime_type": mime_type})
-            except Exception:
-                async for message in session.receive():
-                    if not message or not getattr(message, "server_content", None):
+                    raw = await asyncio.to_thread(ws.receive)
+                    if raw is None:
+                        break
+                    message = _coerce_message(raw)
+                    if not message:
                         continue
-                    model_turn = message.server_content.model_turn
-                    if not model_turn or not model_turn.parts:
-                        continue
-                    for part in model_turn.parts:
-                        if getattr(part, "text", None):
-                            await handle_text_chunk(part.text)
-                            if payload_complete:
-                                return
-                        if getattr(part, "inline_data", None):
-                            audio_bytes = part.inline_data.data
-                            mime_type = part.inline_data.mime_type or "audio/wav"
-                            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-                            await _send_json(ws, {"type": "assistant_audio", "audio": audio_b64, "mime_type": mime_type})
+                    should_continue = await _handle_client_message(session, ws, message)
+                    if not should_continue:
+                        break
 
-        client_task = asyncio.create_task(pump_from_client())
-        model_task = asyncio.create_task(pump_from_model())
+            async def pump_from_model():
+                try:
+                    while True:
+                        turn = session.receive()
+                        async for response in turn:
+                            if getattr(response, "text", None):
+                                await handle_text_chunk(response.text)
+                                if payload_complete:
+                                    return
+                            if getattr(response, "data", None):
+                                audio_bytes = response.data
+                                mime_type = getattr(response, "mime_type", None) or "audio/wav"
+                                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                                await _send_json(ws, {"type": "assistant_audio", "audio": audio_b64, "mime_type": mime_type})
+                except Exception:
+                    async for message in session.receive():
+                        if not message or not getattr(message, "server_content", None):
+                            continue
+                        model_turn = message.server_content.model_turn
+                        if not model_turn or not model_turn.parts:
+                            continue
+                        for part in model_turn.parts:
+                            if getattr(part, "text", None):
+                                await handle_text_chunk(part.text)
+                                if payload_complete:
+                                    return
+                            if getattr(part, "inline_data", None):
+                                audio_bytes = part.inline_data.data
+                                mime_type = part.inline_data.mime_type or "audio/wav"
+                                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                                await _send_json(ws, {"type": "assistant_audio", "audio": audio_b64, "mime_type": mime_type})
 
-        done, pending = await asyncio.wait(
-            [client_task, model_task],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+            client_task = asyncio.create_task(pump_from_client())
+            model_task = asyncio.create_task(pump_from_model())
 
-        for task in pending:
-            task.cancel()
-        if not payload_complete:
-            await _send_json(ws, {"type": "session_end", "reason": "client_closed"})
-            await _close_ws(ws)
+            done, pending = await asyncio.wait(
+                [client_task, model_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending:
+                task.cancel()
+            if not payload_complete:
+                await _send_json(ws, {"type": "session_end", "reason": "client_closed"})
+                await _close_ws(ws)
+    except Exception as e:
+        logger.exception("Live session error")
+        await _send_json(ws, {"type": "error", "message": f"Live session error: {str(e)}"})
+        await _close_ws(ws)
 
 
 @app.route('/')
@@ -876,11 +952,21 @@ def serve_frontend():
 
 @sock.route("/api/live")
 def live(ws):
-    api_key = _load_live_api_key()
-    if not api_key:
-        ws.send(json.dumps({"type": "error", "message": "Gemini API key not configured."}))
+    try:
+        logger.info(
+            "Live WS connect: origin=%s upgrade=%s connection=%s key=%s",
+            request.headers.get("Origin"),
+            request.headers.get("Upgrade"),
+            request.headers.get("Connection"),
+            request.headers.get("Sec-WebSocket-Key"),
+        )
+    except Exception:
+        logger.exception("Live WS connect logging failed")
+    client = _build_live_client()
+    if not client:
+        ws.send(json.dumps({"type": "error", "message": "Live credentials not configured."}))
         return
-    asyncio.run(_handle_live_session(ws, api_key))
+    asyncio.run(_handle_live_session(ws, client))
 
 
 @app.route('/api/sessions', methods=['POST'])
