@@ -702,16 +702,31 @@ async def _close_ws(ws):
 
 async def _send_live_input(session, payload, end_of_turn=True):
     if isinstance(payload, dict) and payload.get("data") is not None:
-        if hasattr(session, "send_realtime_input") and not end_of_turn:
-            await session.send_realtime_input(input=payload)
-            return
-        if hasattr(session, "send"):
-            await session.send(input=payload, end_of_turn=end_of_turn)
+        if hasattr(session, "send_realtime_input"):
+            audio_bytes = payload.get("data") or b""
+            mime_type = payload.get("mime_type") or "audio/pcm"
+            audio_blob = None
+            if audio_bytes:
+                audio_blob = types.Blob(data=audio_bytes, mime_type=mime_type)
+            await session.send_realtime_input(
+                audio=audio_blob,
+                audio_stream_end=bool(end_of_turn),
+            )
             return
         part = types.Part.from_bytes(
             data=payload.get("data"),
             mime_type=payload.get("mime_type") or "application/octet-stream",
         )
+        await session.send_client_content(
+            turns=[types.Content(role="user", parts=[part])],
+            turn_complete=end_of_turn,
+        )
+        return
+    if hasattr(session, "send_client_content"):
+        if isinstance(payload, str):
+            part = types.Part(text=payload)
+        else:
+            part = types.Part(text=str(payload))
         await session.send_client_content(
             turns=[types.Content(role="user", parts=[part])],
             turn_complete=end_of_turn,
@@ -748,6 +763,9 @@ async def _handle_client_message(session, ws, message):
     if msg_type == "input_audio":
         audio_data = message.get("audio")
         mime_type = message.get("mime_type")
+        end_of_turn = message.get("end_of_turn")
+        if end_of_turn is None:
+            end_of_turn = False
         if isinstance(audio_data, str) and audio_data.startswith("data:"):
             mime_type, audio_bytes = _parse_data_url(audio_data)
         else:
@@ -757,12 +775,9 @@ async def _handle_client_message(session, ws, message):
                     audio_bytes = base64.b64decode(audio_data)
                 except Exception:
                     audio_bytes = None
-        if not audio_bytes:
+        if audio_bytes is None or (not audio_bytes and not end_of_turn):
             await _send_json(ws, {"type": "error", "message": "Invalid audio payload."})
             return True
-        end_of_turn = message.get("end_of_turn")
-        if end_of_turn is None:
-            end_of_turn = False
         await _send_live_input(
             session,
             {

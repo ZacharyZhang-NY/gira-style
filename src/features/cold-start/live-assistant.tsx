@@ -3,46 +3,78 @@
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import {
-  COLD_START_QUESTIONS,
-  EMPTY_COLD_START_ANSWERS,
-  type ColdStartAnswers,
-} from "./questions";
+
+type LiveAssistantPayload = {
+  stylePayload: string;
+};
 
 type LiveAssistantProps = {
-  onComplete: (answers: ColdStartAnswers) => void;
+  onComplete: (payload: LiveAssistantPayload) => void;
+  autoEnableMic?: boolean;
+  initialStream?: MediaStream | null;
+  initialInputContext?: AudioContext | null;
   onBack?: () => void;
 };
 
+const TARGET_SAMPLE_RATE = 16000;
+const VAD_CHECK_INTERVAL_MS = 200;
+const VAD_SILENCE_MS = 1000;
+const VAD_MIN_RMS = 0.015;
+const INPUT_BUFFER_SIZE = 4096;
 
-const AUDIO_MIME_TYPES = [
-  "audio/webm;codecs=opus",
-  "audio/webm",
-  "audio/ogg;codecs=opus",
-  "audio/ogg",
-  "audio/wav",
-];
-
-const MAX_RECORDING_MS = 9000;
-const MIN_RECORDING_MS = 1200;
-const SILENCE_DURATION_MS = 900;
-const SILENCE_THRESHOLD = 0.02;
-
-function getPreferredMimeType() {
-  if (typeof MediaRecorder === "undefined") return "";
-  const supported = AUDIO_MIME_TYPES.find((type) =>
-    MediaRecorder.isTypeSupported(type),
-  );
-  return supported || "";
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
 }
 
-function blobToDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+function computeRms(samples: Float32Array) {
+  let sumSq = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const s = samples[i];
+    sumSq += s * s;
+  }
+  return Math.sqrt(sumSq / samples.length);
+}
+
+function downsampleBuffer(
+  buffer: Float32Array,
+  inputSampleRate: number,
+  outputSampleRate: number,
+) {
+  if (outputSampleRate === inputSampleRate) {
+    return buffer;
+  }
+  const ratio = inputSampleRate / outputSampleRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+    let sum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i += 1) {
+      sum += buffer[i];
+      count += 1;
+    }
+    result[offsetResult] = sum / count;
+    offsetResult += 1;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
+}
+
+function pcmFloatTo16BitPCM(input: Float32Array) {
+  const output = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i += 1) {
+    let s = Math.max(-1, Math.min(1, input[i]));
+    output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return output;
 }
 
 function base64ToArrayBuffer(base64: string) {
@@ -124,115 +156,43 @@ function buildWebSocketUrl(path: string) {
   return `${wsProtocol}//${hostname}${path}`;
 }
 
-function buildLiveSystemInstruction() {
-  const questionLines = COLD_START_QUESTIONS.map((question, index) => {
-    const values = question.options.map((opt) => `"${opt.value}"`).join(", ");
-    const selectNote = question.multi
-      ? "Multiple selections allowed."
-      : "Choose exactly one.";
-    return `Q${index + 1} (${question.id}): ${question.title}\nAllowed answers: ${values}\n${selectNote}`;
-  }).join("\n\n");
-
-  return [
-    "You are Gira, a live sales assistant. Ask the four questions below in order.",
-    "Ask ONE question per turn, wait for the user's reply, then confirm briefly before the next question.",
-    "Use the exact question wording and answer choices provided. If the user's answer is unclear, ask a short follow-up to map it to the allowed answers.",
-    "After all four questions are answered, say one short confirmation sentence, then immediately output the JSON payload wrapped with the markers exactly as shown.",
-    "Payload format:",
-    "---BEGIN_STYLE_PAYLOAD---",
-    "{\"q1\":[\"\"],\"q2\":[\"\"],\"q3\":[\"\"],\"q4\":\"\"}",
-    "---END_STYLE_PAYLOAD---",
-    "Use ONLY the allowed answer values in the payload. Do not add extra keys. Do not add any text after the payload.",
-    "",
-    "Questions:",
-    questionLines,
-  ].join("\n");
-}
-
-function extractJson(rawText: string) {
-  let cleaned = rawText.replace(/^\uFEFF/, "").trim();
-  if (!cleaned) return "";
-
-  cleaned = cleaned.replace(/tool_code/g, "").trim();
-  cleaned = cleaned.replace(/^```json\s*/i, "");
-  cleaned = cleaned.replace(/^```\s*/i, "");
-  cleaned = cleaned.replace(/```\s*$/g, "");
-
-  const jsonStart = cleaned.indexOf("{");
-  const jsonEnd = cleaned.lastIndexOf("}");
-  if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-    cleaned = cleaned.slice(jsonStart, jsonEnd + 1);
-  }
-  return cleaned.trim();
-}
-
-function coerceAnswers(payload: string): ColdStartAnswers | null {
-  if (!payload) return null;
-  try {
-    const cleaned = extractJson(payload);
-    const parsed = cleaned ? (JSON.parse(cleaned) as Partial<ColdStartAnswers>) : null;
-    if (!parsed) return null;
-
-    const allowed = Object.fromEntries(
-      COLD_START_QUESTIONS.map((question) => [
-        question.id,
-        new Set(question.options.map((opt) => opt.value)),
-      ]),
-    ) as Record<keyof ColdStartAnswers, Set<string>>;
-
-    const normalizeMulti = (value: unknown) => {
-      if (Array.isArray(value)) {
-        return value.filter(
-          (item): item is string =>
-            typeof item === "string" && item.trim().length > 0,
-        );
-      }
-      if (typeof value === "string" && value.trim()) return [value.trim()];
-      return [];
-    };
-
-    const q1 = normalizeMulti(parsed.q1).filter((value) => allowed.q1.has(value));
-    const q2 = normalizeMulti(parsed.q2).filter((value) => allowed.q2.has(value));
-    const q3 = normalizeMulti(parsed.q3).filter((value) => allowed.q3.has(value));
-    const q4Candidate = typeof parsed.q4 === "string" ? parsed.q4.trim() : "";
-    const q4 = allowed.q4.has(q4Candidate) ? q4Candidate : "";
-
-    if (!q1.length || !q2.length || !q3.length || !q4) return null;
-
-    return {
-      ...EMPTY_COLD_START_ANSWERS,
-      q1,
-      q2,
-      q3,
-      q4,
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
+export function LiveAssistant({
+  onComplete,
+  onBack,
+  autoEnableMic = false,
+  initialStream = null,
+  initialInputContext = null,
+}: LiveAssistantProps) {
   const [status, setStatus] = React.useState<
     "idle" | "connecting" | "ready" | "recording" | "processing" | "error"
   >("idle");
   const [error, setError] = React.useState<string>("");
+  const [micEnabled, setMicEnabled] = React.useState(false);
   const statusRef = React.useRef(status);
   const wsRef = React.useRef<WebSocket | null>(null);
-  const recorderRef = React.useRef<MediaRecorder | null>(null);
-  const streamRef = React.useRef<MediaStream | null>(null);
-  const chunksRef = React.useRef<Blob[]>([]);
   const queueRef = React.useRef<Array<{ audio: string; mimeType?: string }>>(
     [],
   );
   const playingRef = React.useRef(false);
   const playbackTimeRef = React.useRef(0);
   const audioContextRef = React.useRef<AudioContext | null>(null);
-  const analyserRef = React.useRef<AnalyserNode | null>(null);
-  const sourceRef = React.useRef<MediaStreamAudioSourceNode | null>(null);
-  const rafRef = React.useRef<number | null>(null);
-  const recordingStartRef = React.useRef<number>(0);
-  const silenceStartRef = React.useRef<number | null>(null);
+  const inputContextRef = React.useRef<AudioContext | null>(null);
+  const inputStreamRef = React.useRef<MediaStream | null>(null);
+  const inputSourceRef = React.useRef<MediaStreamAudioSourceNode | null>(null);
+  const inputProcessorRef = React.useRef<ScriptProcessorNode | null>(null);
+  const inputGainRef = React.useRef<GainNode | null>(null);
+  const ownsInputStreamRef = React.useRef(false);
+  const ownsInputContextRef = React.useRef(false);
+  const vadIntervalRef = React.useRef<number | null>(null);
+  const recordingRef = React.useRef(false);
+  const voiceStartedRef = React.useRef(false);
+  const lastVoiceAtRef = React.useRef(0);
+  const endOfTurnSentRef = React.useRef(false);
+  const userActivatedRef = React.useRef(false);
+  const readyRef = React.useRef(false);
+  const autoEnableAttemptedRef = React.useRef(false);
   const autoRecordTimerRef = React.useRef<number | null>(null);
+  const startRetryTimerRef = React.useRef<number | null>(null);
 
   const clearAutoRecordTimer = React.useCallback(() => {
     if (typeof window === "undefined") return;
@@ -242,160 +202,228 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     }
   }, []);
 
-  const stopMonitoring = React.useCallback(() => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
+  const clearStartRetryTimer = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (startRetryTimerRef.current !== null) {
+      window.clearTimeout(startRetryTimerRef.current);
+      startRetryTimerRef.current = null;
     }
-    silenceStartRef.current = null;
+  }, []);
+
+  const stopVadLoop = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (vadIntervalRef.current !== null) {
+      window.clearInterval(vadIntervalRef.current);
+      vadIntervalRef.current = null;
+    }
   }, []);
 
   React.useEffect(() => {
     statusRef.current = status;
   }, [status]);
 
+  const sendEndOfTurn = React.useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (endOfTurnSentRef.current) return;
+    endOfTurnSentRef.current = true;
+    recordingRef.current = false;
+    stopVadLoop();
+    wsRef.current.send(
+      JSON.stringify({
+        type: "input_audio",
+        audio: "",
+        mime_type: "audio/pcm",
+        end_of_turn: true,
+      }),
+    );
+    setStatus("ready");
+  }, [stopVadLoop]);
+
+  const sendAudioChunk = React.useCallback((chunk: Int16Array) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!recordingRef.current) return;
+    wsRef.current.send(
+      JSON.stringify({
+        type: "input_audio",
+        audio: arrayBufferToBase64(chunk.buffer),
+        mime_type: "audio/pcm",
+        end_of_turn: false,
+      }),
+    );
+  }, []);
+
+  const ensureInputPipeline = React.useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setError("Voice recording isn't supported in this browser.");
+      setStatus("error");
+      throw new Error("media_devices_unavailable");
+    }
+    setError("");
+    let stream = inputStreamRef.current;
+    if (!stream) {
+      if (initialStream) {
+        stream = initialStream;
+        inputStreamRef.current = stream;
+        ownsInputStreamRef.current = false;
+      }
+    }
+    if (!stream) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      } catch {
+        setError("Microphone access is blocked. Enable it and try again.");
+        setStatus("error");
+        throw new Error("mic_blocked");
+      }
+      inputStreamRef.current = stream;
+      ownsInputStreamRef.current = true;
+    }
+    let context = inputContextRef.current;
+    if (!context) {
+      if (initialInputContext) {
+        context = initialInputContext;
+        inputContextRef.current = context;
+        ownsInputContextRef.current = false;
+      }
+    }
+    if (!context) {
+      context = new AudioContext();
+      inputContextRef.current = context;
+      ownsInputContextRef.current = true;
+    }
+    if (context.state === "suspended") {
+      await context.resume();
+    }
+    if (!inputSourceRef.current) {
+      inputSourceRef.current = context.createMediaStreamSource(stream);
+    }
+    if (!inputProcessorRef.current) {
+      const processor = context.createScriptProcessor(INPUT_BUFFER_SIZE, 1, 1);
+      processor.onaudioprocess = (event) => {
+        if (!recordingRef.current) return;
+        const inputBuffer = event.inputBuffer.getChannelData(0);
+        const rms = computeRms(inputBuffer);
+        if (rms >= VAD_MIN_RMS) {
+          voiceStartedRef.current = true;
+          lastVoiceAtRef.current = Date.now();
+          endOfTurnSentRef.current = false;
+        }
+        const downsampled = downsampleBuffer(
+          inputBuffer,
+          context.sampleRate,
+          TARGET_SAMPLE_RATE,
+        );
+        const int16 = pcmFloatTo16BitPCM(downsampled);
+        sendAudioChunk(int16);
+      };
+      inputProcessorRef.current = processor;
+      const gain = context.createGain();
+      gain.gain.value = 0;
+      inputGainRef.current = gain;
+      processor.connect(gain);
+      gain.connect(context.destination);
+      inputSourceRef.current.connect(processor);
+    }
+  }, [initialInputContext, initialStream, sendAudioChunk]);
+
+  const startVadLoop = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (vadIntervalRef.current !== null) return;
+    vadIntervalRef.current = window.setInterval(() => {
+      if (!recordingRef.current || !voiceStartedRef.current) return;
+      if (endOfTurnSentRef.current) return;
+      const silenceMs = Date.now() - lastVoiceAtRef.current;
+      if (silenceMs >= VAD_SILENCE_MS) {
+        sendEndOfTurn();
+      }
+    }, VAD_CHECK_INTERVAL_MS);
+  }, [sendEndOfTurn]);
+
   const teardownMedia = React.useCallback(() => {
     clearAutoRecordTimer();
-    stopMonitoring();
-    recorderRef.current?.stop();
-    recorderRef.current = null;
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+    clearStartRetryTimer();
+    stopVadLoop();
+    recordingRef.current = false;
+    if (inputProcessorRef.current) {
+      inputProcessorRef.current.disconnect();
+      inputProcessorRef.current = null;
     }
-    if (sourceRef.current) {
-      sourceRef.current.disconnect();
-      sourceRef.current = null;
+    if (inputSourceRef.current) {
+      inputSourceRef.current.disconnect();
+      inputSourceRef.current = null;
+    }
+    if (inputGainRef.current) {
+      inputGainRef.current.disconnect();
+      inputGainRef.current = null;
+    }
+    if (inputStreamRef.current) {
+      if (ownsInputStreamRef.current) {
+        inputStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      inputStreamRef.current = null;
+    }
+    if (inputContextRef.current) {
+      if (ownsInputContextRef.current) {
+        inputContextRef.current.close().catch(() => undefined);
+      }
+      inputContextRef.current = null;
     }
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => undefined);
       audioContextRef.current = null;
     }
-  }, [clearAutoRecordTimer, stopMonitoring]);
+  }, [clearAutoRecordTimer, clearStartRetryTimer, stopVadLoop]);
 
   const stopRecording = React.useCallback(() => {
-    stopMonitoring();
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      recorderRef.current.stop();
-    }
-  }, [stopMonitoring]);
+    recordingRef.current = false;
+    stopVadLoop();
+    setStatus("ready");
+  }, [stopVadLoop]);
 
   const startRecording = React.useCallback(async () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (statusRef.current !== "ready") return;
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setError("Voice recording isn't supported in this browser.");
-      setStatus("error");
-      return;
-    }
-    if (typeof MediaRecorder === "undefined") {
-      setError("Voice recording isn't available on this device.");
-      setStatus("error");
-      return;
-    }
-    setError("");
-    setStatus("recording");
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
+    if (!userActivatedRef.current) return false;
+    if (recordingRef.current) return true;
     try {
-      if (!streamRef.current) {
-        streamRef.current = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
-      }
+      await ensureInputPipeline();
     } catch {
-      setError("Microphone access is blocked. Enable it and try again.");
-      setStatus("error");
-      return;
+      return false;
     }
-    const mimeType = getPreferredMimeType();
-    const recorder = new MediaRecorder(
-      streamRef.current,
-      mimeType ? { mimeType } : undefined,
-    );
-    recorderRef.current = recorder;
-    chunksRef.current = [];
-    stopMonitoring();
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunksRef.current.push(event.data);
-    };
-    recorder.onstop = async () => {
-      stopMonitoring();
-      const blob = new Blob(chunksRef.current, { type: mimeType || undefined });
-      chunksRef.current = [];
-      setStatus("processing");
-      try {
-        const dataUrl = await blobToDataUrl(blob);
-        wsRef.current?.send(
-          JSON.stringify({
-            type: "input_audio",
-            audio: dataUrl,
-            mime_type: blob.type || undefined,
-            end_of_turn: true,
-          }),
-        );
-        setStatus("ready");
-      } catch {
-        setError("We couldn't send that recording. Try again.");
-        setStatus("error");
-      }
-    };
-    if (streamRef.current) {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext();
-      }
-      if (sourceRef.current) {
-        sourceRef.current.disconnect();
-      }
-      const source = audioContextRef.current.createMediaStreamSource(
-        streamRef.current,
-      );
-      const analyser = audioContextRef.current.createAnalyser();
-      analyser.fftSize = 2048;
-      source.connect(analyser);
-      sourceRef.current = source;
-      analyserRef.current = analyser;
-      const data = new Uint8Array(analyser.fftSize);
-      recordingStartRef.current = performance.now();
-      silenceStartRef.current = null;
-      const monitor = () => {
-        if (!recorderRef.current || recorderRef.current.state !== "recording") return;
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i += 1) {
-          const normalized = (data[i] - 128) / 128;
-          sum += normalized * normalized;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        const now = performance.now();
-        const elapsed = now - recordingStartRef.current;
-        if (rms < SILENCE_THRESHOLD) {
-          if (silenceStartRef.current === null) {
-            silenceStartRef.current = now;
-          }
-          if (
-            silenceStartRef.current &&
-            now - silenceStartRef.current > SILENCE_DURATION_MS &&
-            elapsed > MIN_RECORDING_MS
-          ) {
-            stopRecording();
-            return;
-          }
-        } else {
-          silenceStartRef.current = null;
-        }
-        if (elapsed > MAX_RECORDING_MS) {
-          stopRecording();
-          return;
-        }
-        rafRef.current = requestAnimationFrame(monitor);
-      };
-      rafRef.current = requestAnimationFrame(monitor);
+    endOfTurnSentRef.current = false;
+    voiceStartedRef.current = false;
+    lastVoiceAtRef.current = Date.now();
+    recordingRef.current = true;
+    setMicEnabled(true);
+    setStatus("recording");
+    startVadLoop();
+    return true;
+  }, [ensureInputPipeline, startVadLoop]);
+
+  const attemptStartRecording = React.useCallback(async () => {
+    if (!userActivatedRef.current) return;
+    if (!readyRef.current) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (recordingRef.current) return;
+    const started = await startRecording();
+    if (!started && typeof window !== "undefined") {
+      clearStartRetryTimer();
+      startRetryTimerRef.current = window.setTimeout(() => {
+        startRetryTimerRef.current = null;
+        void attemptStartRecording();
+      }, 300);
     }
-    recorder.start();
-  }, [stopMonitoring, stopRecording]);
+  }, [clearStartRetryTimer, startRecording]);
 
   const scheduleAutoRecord = React.useCallback(
     (delayMs = 200) => {
       if (typeof window === "undefined") return;
+      if (!userActivatedRef.current) return;
       clearAutoRecordTimer();
       autoRecordTimerRef.current = window.setTimeout(() => {
         autoRecordTimerRef.current = null;
@@ -483,12 +511,16 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
           case "ready":
             setStatus("ready");
             setError("");
+            statusRef.current = "ready";
+            readyRef.current = true;
+            void attemptStartRecording();
             return;
           case "assistant_text":
             return;
           case "assistant_audio":
             if (payload.audio) {
               clearAutoRecordTimer();
+              stopRecording();
               queueRef.current.push({
                 audio: payload.audio,
                 mimeType: payload.mime_type || "audio/wav",
@@ -497,15 +529,15 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
             }
             return;
           case "style_payload": {
-            const parsed = payload.payload ? coerceAnswers(payload.payload) : null;
-            if (!parsed) {
+            const stylePayload = payload.payload?.trim();
+            if (!stylePayload) {
               setError(
-                "We couldn't read the voice answers. Please try the live assistant again.",
+                "We couldn't capture the style summary. Please try the live assistant again.",
               );
               setStatus("error");
               return;
             }
-            onComplete(parsed);
+            onComplete({ stylePayload });
             wsRef.current?.close();
             return;
           }
@@ -520,7 +552,13 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
         // Ignore non-JSON frames.
       }
     },
-    [clearAutoRecordTimer, onComplete, playNext],
+    [
+      clearAutoRecordTimer,
+      onComplete,
+      playNext,
+      scheduleAutoRecord,
+      stopRecording,
+    ],
   );
 
   const connect = React.useCallback(() => {
@@ -538,14 +576,15 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     const ws = new WebSocket(buildWebSocketUrl("/api/live"));
     wsRef.current = ws;
     ws.onopen = () => {
-      const systemInstruction = buildLiveSystemInstruction();
       ws.send(
         JSON.stringify({
           type: "config",
           response_modalities: ["AUDIO"],
-          system_instruction: systemInstruction,
         }),
       );
+      if (userActivatedRef.current) {
+        void attemptStartRecording();
+      }
     };
     ws.onmessage = handleSocketMessage;
     ws.onerror = () => {
@@ -554,9 +593,10 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     };
     ws.onclose = () => {
       wsRef.current = null;
+      stopRecording();
       setStatus((prev) => (prev === "error" ? prev : "idle"));
     };
-  }, [handleSocketMessage]);
+  }, [attemptStartRecording, handleSocketMessage, stopRecording]);
 
   const resetSession = React.useCallback(() => {
     wsRef.current?.close();
@@ -564,8 +604,11 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     queueRef.current = [];
     playingRef.current = false;
     playbackTimeRef.current = 0;
+    userActivatedRef.current = false;
+    readyRef.current = false;
     teardownMedia();
     setError("");
+    setMicEnabled(false);
     setStatus("idle");
   }, [teardownMedia]);
 
@@ -573,6 +616,32 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     resetSession();
     connect();
   }, [connect, resetSession]);
+
+  const handleEnableMic = React.useCallback(async () => {
+    userActivatedRef.current = true;
+    try {
+      await ensureInputPipeline();
+      setMicEnabled(true);
+    } catch {
+      return;
+    }
+    await attemptStartRecording();
+  }, [attemptStartRecording, ensureInputPipeline]);
+
+  React.useEffect(() => {
+    if (!autoEnableMic) return;
+    if (autoEnableAttemptedRef.current) return;
+    autoEnableAttemptedRef.current = true;
+    void handleEnableMic();
+  }, [autoEnableMic, handleEnableMic]);
+
+  React.useEffect(() => {
+    if (initialStream && !userActivatedRef.current) {
+      userActivatedRef.current = true;
+      setMicEnabled(true);
+      void attemptStartRecording();
+    }
+  }, [attemptStartRecording, initialStream]);
 
   React.useEffect(() => {
     connect();
@@ -599,6 +668,16 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
+        {!micEnabled ? (
+          <Button
+            tone="ghost"
+            onClick={handleEnableMic}
+            className="text-xs sm:text-sm"
+          >
+            Enable microphone
+          </Button>
+        ) : null}
+
         <Button
           tone="ghost"
           onClick={restartSession}

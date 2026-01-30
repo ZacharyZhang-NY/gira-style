@@ -6,18 +6,18 @@
   - `/workspaces/aura_style_agent/service_account.json`
 - Speech-to-Text API enabled in that Google Cloud project.
 
-## Start the API server (port 5002)
+## Start the API server (port 5001)
 ```bash
 nohup env GOOGLE_APPLICATION_CREDENTIALS=/workspaces/aura_style_agent/service_account.json \
-  python - <<'PY' >/tmp/aura_live_5002.log 2>&1 & echo $!
+  python - <<'PY' >/tmp/aura_live_5001.log 2>&1 & echo $!
 from api.index import app
-app.run(host='0.0.0.0', port=5002, debug=False)
+app.run(host='0.0.0.0', port=5001, debug=False)
 PY
 ```
 
 Verify:
 ```bash
-curl -sS http://127.0.0.1:5002/health
+curl -sS http://127.0.0.1:5001/health
 ```
 Expected:
 ```json
@@ -36,9 +36,9 @@ http://127.0.0.1:8000/live_browser_test.html
 
 ## Configure the WebSocket URL
 - Local:
-  - `ws://127.0.0.1:5002/api/live`
+  - `ws://127.0.0.1:5001/api/live`
 - Codespaces (forwarded ports):
-  - `wss://<your-codespace>-5002.app.github.dev/api/live`
+  - `wss://<your-codespace>-5001.app.github.dev/api/live`
 
 ## Run a test session
 1. Click **Start**.
@@ -54,7 +54,7 @@ Expected logs:
 ### No transcript
 Check server log:
 ```bash
-tail -n 120 /tmp/aura_live_5002.log
+tail -n 120 /tmp/aura_live_5001.log
 ```
 Common causes:
 - Speech-to-Text API not enabled in Google Cloud.
@@ -67,8 +67,8 @@ Common causes:
 
 ### Browser audio issues
 - Make sure mic permissions are allowed for the test page.
-- If Codespaces, confirm port 5002 visibility is Public.
+- If Codespaces, confirm port 5001 visibility is Public.
 
 ## Useful logs
-- API: `/tmp/aura_live_5002.log`
+- API: `/tmp/aura_live_5001.log`
 - Browser server: `/tmp/live_browser_8000.log`
