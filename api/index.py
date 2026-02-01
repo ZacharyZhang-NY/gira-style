@@ -878,12 +878,15 @@ async def _handle_live_session(ws, client: genai.Client):
                 tail = recent_text[-600:]
                 if not tail:
                     return ""
-                return (
+                cleaned = (
                     tail.lower()
                     .replace("’", "'")
                     .replace("‘", "'")
                     .replace("`", "'")
+                    .replace("*", "")
+                    .replace("_", "")
                 )
+                return " ".join(cleaned.split())
 
             async def _maybe_force_payload():
                 nonlocal payload_complete
@@ -892,7 +895,15 @@ async def _handle_live_session(ws, client: genai.Client):
                 recent_tail = _normalized_recent_tail()
                 if not recent_tail:
                     return False
-                if "concluding the session" in recent_tail or "session complete" in recent_tail or "concluding session" in recent_tail:
+                if (
+                    "concluding the session" in recent_tail
+                    or "session complete" in recent_tail
+                    or "concluding session" in recent_tail
+                    or "concluding the decision flow" in recent_tail
+                    or "concluding decision flow" in recent_tail
+                    or "concluding the decision" in recent_tail
+                    or "natural exit point" in recent_tail
+                ):
                     logger.info("[LiveSession] URGENT: Detected concluding marker - forcing payload send")
                     payload_complete = True
                     minimal_payload = """---BEGIN_STYLE_PAYLOAD---

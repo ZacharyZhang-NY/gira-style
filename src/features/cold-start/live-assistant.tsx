@@ -158,6 +158,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const isPlayingRef = React.useRef(false);
   const nextPlayTimeRef = React.useRef(0);
   const pendingPcmByteRef = React.useRef<Uint8Array | null>(null);
+  const completionSentRef = React.useRef(false);
 
   const micStartedRef = React.useRef(false);
   const voiceStartedRef = React.useRef(false);
@@ -176,7 +177,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     if (endOfTurnSentRef.current) return;
     ws.send(JSON.stringify({
       type: "input_audio",
-      audio: arrayBufferToBase64(int16.buffer),
+      audio: arrayBufferToBase64(int16.buffer as ArrayBuffer),
       mime_type: "audio/pcm",
       end_of_turn: false,
     }));
@@ -407,11 +408,16 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
         processPlayQueue();
       } else if (msg.type === "style_payload" && msg.payload) {
         console.log("[LiveAssistant] Received style_payload, calling onComplete");
+        completionSentRef.current = true;
         onCompleteRef.current({ stylePayload: msg.payload.trim() });
         // Close WebSocket cleanly after receiving payload
         wsRef.current?.close();
       } else if (msg.type === "session_end") {
         // Session complete - close WebSocket
+        if (!completionSentRef.current) {
+          completionSentRef.current = true;
+          onCompleteRef.current({ stylePayload: "" });
+        }
         wsRef.current?.close();
       } else if (msg.type === "error") {
         setError(msg.message || "Live assistant error");
@@ -488,6 +494,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     isPlayingRef.current = false;
     nextPlayTimeRef.current = 0;
     pendingPcmByteRef.current = null;
+    completionSentRef.current = false;
   }, [stopMicPipeline]);
 
   // Restart session - go back to selection page
