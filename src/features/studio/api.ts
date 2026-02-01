@@ -79,7 +79,7 @@ type RequestOptions = {
 };
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-const DEFAULT_REMOTE_BACKEND_BASE_URL = "https://aritzia.girastyleai.com";
+const DEFAULT_REMOTE_BACKEND_BASE_URL = "https://api.girastyleai.com";
 const LOCAL_BACKEND_BASE_URL = "http://127.0.0.1:5001";
 
 function pad2(value: number) {

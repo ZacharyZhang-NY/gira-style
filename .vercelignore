@@ -1,0 +1,8 @@
+# Exclude backend and large/non-Next assets from Vercel deployments.
+# Backend is deployed via Docker (Coolify), frontend via Vercel.
+api/**
+util/**
+Dockerfile
+.dockerignore
+requirements.txt
+templates/**

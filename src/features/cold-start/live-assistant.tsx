@@ -164,7 +164,7 @@ function buildWebSocketUrl(path: string) {
     return `ws://${hostname}:5001${path}`;
   }
   if (hostname.endsWith(".vercel.app")) {
-    return `wss://aritzia.girastyleai.com${path}`;
+    return `wss://api.girastyleai.com${path}`;
   }
   const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
   const portPart = port ? `:${port}` : "";
