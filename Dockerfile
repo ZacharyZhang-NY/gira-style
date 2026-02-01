@@ -20,5 +20,5 @@ COPY api ./api
 COPY util ./util
 EXPOSE 5001
 
-# Use gunicorn with gevent-websocket worker for Flask-Sock
-CMD ["gunicorn", "-k", "geventwebsocket.gunicorn.workers.GeventWebSocketWorker", "-w", "1", "-b", "0.0.0.0:5001", "api.index:app"]
+# Use the same dev server behavior as local (Flask built-in). Single process, but simplest for WS compatibility.
+CMD ["python", "api/index.py"]
