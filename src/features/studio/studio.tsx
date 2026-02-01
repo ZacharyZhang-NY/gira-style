@@ -30,6 +30,7 @@ import {
   logSessionTurn,
   updateCommunityFeedback,
 } from "./api";
+import { getRandomSeedChips } from "./seed-chips";
 import { CommunityLooks } from "./components/community-looks";
 import { MotionPreview } from "./components/motion-preview";
 import { OutfitPreview } from "./components/outfit-preview";
@@ -461,9 +462,13 @@ export function Studio() {
 
   React.useEffect(() => {
     if (!hydrated || !sessionReady || !sessionId) return;
-    const controller = new AbortController();
     const history = buildConversationHistory(versionsRef.current);
     const turnIndex = history.length ? history.length : 0;
+    if (!history.length) {
+      setChips(getRandomSeedChips());
+      return;
+    }
+    const controller = new AbortController();
     generateSessionChips(sessionId, turnIndex, history, {
       signal: controller.signal,
     })
