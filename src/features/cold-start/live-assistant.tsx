@@ -10,9 +10,6 @@ type LiveAssistantPayload = {
 
 type LiveAssistantProps = {
   onComplete: (payload: LiveAssistantPayload) => void;
-  autoEnableMic?: boolean;
-  initialStream?: MediaStream | null;
-  initialInputContext?: AudioContext | null;
   onBack?: () => void;
 };
 
@@ -20,61 +17,14 @@ const TARGET_SAMPLE_RATE = 16000;
 const VAD_CHECK_INTERVAL_MS = 200;
 const VAD_SILENCE_MS = 1000;
 const VAD_MIN_RMS = 0.015;
-const INPUT_BUFFER_SIZE = 4096;
 
-function arrayBufferToBase64(buffer: ArrayBuffer) {
+function arrayBufferToBase64(buffer: ArrayBufferLike) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
   for (let i = 0; i < bytes.byteLength; i += 1) {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
-}
-
-function computeRms(samples: Float32Array) {
-  let sumSq = 0;
-  for (let i = 0; i < samples.length; i += 1) {
-    const s = samples[i];
-    sumSq += s * s;
-  }
-  return Math.sqrt(sumSq / samples.length);
-}
-
-function downsampleBuffer(
-  buffer: Float32Array,
-  inputSampleRate: number,
-  outputSampleRate: number,
-) {
-  if (outputSampleRate === inputSampleRate) {
-    return buffer;
-  }
-  const ratio = inputSampleRate / outputSampleRate;
-  const newLength = Math.round(buffer.length / ratio);
-  const result = new Float32Array(newLength);
-  let offsetResult = 0;
-  let offsetBuffer = 0;
-  while (offsetResult < result.length) {
-    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-    let sum = 0;
-    let count = 0;
-    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i += 1) {
-      sum += buffer[i];
-      count += 1;
-    }
-    result[offsetResult] = sum / count;
-    offsetResult += 1;
-    offsetBuffer = nextOffsetBuffer;
-  }
-  return result;
-}
-
-function pcmFloatTo16BitPCM(input: Float32Array) {
-  const output = new Int16Array(input.length);
-  for (let i = 0; i < input.length; i += 1) {
-    let s = Math.max(-1, Math.min(1, input[i]));
-    output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-  }
-  return output;
 }
 
 function base64ToArrayBuffer(base64: string) {
@@ -86,257 +36,174 @@ function base64ToArrayBuffer(base64: string) {
   return bytes.buffer;
 }
 
-function parseSampleRate(mimeType?: string) {
-  if (!mimeType) return null;
-  const match = mimeType.match(/rate=(\d+)/i);
-  if (!match) return null;
+function normalizeMimeType(mimeType?: string) {
+  return (mimeType || "").trim().toLowerCase();
+}
+
+function parseSampleRate(mimeType?: string, fallback = 24000) {
+  if (!mimeType) return fallback;
+  const match = mimeType.match(/rate\s*=\s*(\d+)/i);
+  if (!match) return fallback;
   const parsed = Number(match[1]);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function pcm16leToFloat32(arrayBuffer: ArrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer);
-  const sampleCount = Math.floor(bytes.byteLength / 2);
-  const pcm16 = new Int16Array(sampleCount);
-  for (let i = 0; i < sampleCount; i += 1) {
-    const lo = bytes[i * 2];
-    const hi = bytes[i * 2 + 1];
-    let val = (hi << 8) | lo;
-    if (val & 0x8000) {
-      val -= 0x10000;
-    }
-    pcm16[i] = val;
-  }
+function isWavMimeType(mimeType: string) {
+  return (
+    mimeType.includes("audio/wav") ||
+    mimeType.includes("audio/wave") ||
+    mimeType.includes("audio/x-wav")
+  );
+}
+
+function isWavHeader(bytes: Uint8Array) {
+  if (bytes.length < 12) return false;
+  return (
+    bytes[0] === 0x52 && // R
+    bytes[1] === 0x49 && // I
+    bytes[2] === 0x46 && // F
+    bytes[3] === 0x46 && // F
+    bytes[8] === 0x57 && // W
+    bytes[9] === 0x41 && // A
+    bytes[10] === 0x56 && // V
+    bytes[11] === 0x45 // E
+  );
+}
+
+function pcm16ToAudioBuffer(
+  ctx: AudioContext,
+  buffer: ArrayBuffer,
+  sampleRate: number,
+) {
+  const bytes = new Uint8Array(buffer);
+  const sampleCount = Math.floor(bytes.length / 2);
   const float32 = new Float32Array(sampleCount);
+  const view = new DataView(buffer);
   for (let i = 0; i < sampleCount; i += 1) {
-    float32[i] = Math.max(-1, Math.min(1, pcm16[i] / 0x8000));
+    const val = view.getInt16(i * 2, true);
+    float32[i] = val / 0x8000;
   }
-  return float32;
+  const audioBuffer = ctx.createBuffer(1, sampleCount, sampleRate);
+  audioBuffer.copyToChannel(float32, 0);
+  return audioBuffer;
 }
 
-function stripTrailingSlash(value: string) {
-  return value.replace(/\/+$/, "");
+function computeRms(samples: Float32Array) {
+  let sumSq = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    sumSq += samples[i] * samples[i];
+  }
+  return Math.sqrt(sumSq / samples.length);
+}
+
+function downsampleBuffer(buffer: Float32Array, inputRate: number, outputRate: number) {
+  if (outputRate === inputRate) return buffer;
+  const ratio = inputRate / outputRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.floor((i + 1) * ratio);
+    let sum = 0;
+    for (let j = start; j < end && j < buffer.length; j++) {
+      sum += buffer[j];
+    }
+    result[i] = sum / (end - start);
+  }
+  return result;
+}
+
+function pcmFloatTo16BitPCM(input: Float32Array) {
+  const output = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return output;
 }
 
 function buildWebSocketUrl(path: string) {
-  const liveOverride = process.env.NEXT_PUBLIC_LIVE_WS_URL;
-  if (liveOverride) {
-    const base = stripTrailingSlash(liveOverride);
-    return base.endsWith(path) ? base : `${base}${path}`;
-  }
-  const configured = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (configured) {
-    const base = stripTrailingSlash(configured);
-    return base.replace(/^http/, "ws") + path;
-  }
-
   if (typeof window === "undefined") return path;
-
   const { hostname, protocol } = window.location;
-
   if (hostname === "localhost" || hostname === "127.0.0.1") {
     return `ws://${hostname}:5001${path}`;
   }
-
-  if (hostname === "aura-style-agent.vercel.app" || hostname.endsWith(".vercel.app")) {
+  if (hostname.endsWith(".vercel.app")) {
     return `wss://aritzia.girastyleai.com${path}`;
   }
-
-  const codespacePattern = /-(\d+)\.app\.github\.dev$/;
-  const match = hostname.match(codespacePattern);
-  if (match) {
-    const currentPort = match[1];
-    if (currentPort !== "5001") {
-      const newHostname = hostname.replace(codespacePattern, "-5001.app.github.dev");
-      return `wss://${newHostname}${path}`;
-    }
-  }
-
   const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
   return `${wsProtocol}//${hostname}${path}`;
 }
 
-export function LiveAssistant({
-  onComplete,
-  onBack,
-  autoEnableMic = false,
-  initialStream = null,
-  initialInputContext = null,
-}: LiveAssistantProps) {
-  const [status, setStatus] = React.useState<
-    "idle" | "connecting" | "ready" | "recording" | "processing" | "error"
-  >("idle");
-  const [error, setError] = React.useState<string>("");
-  const [micEnabled, setMicEnabled] = React.useState(false);
+export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
+  const [status, setStatus] = React.useState<string>("idle");
+  const [audioLevel, setAudioLevel] = React.useState(0);
+  const [error, setError] = React.useState("");
+  const [waitingForResponse, setWaitingForResponse] = React.useState(false);
+  
+  // Ref to track status for callbacks
   const statusRef = React.useRef(status);
-  const wsRef = React.useRef<WebSocket | null>(null);
-  const queueRef = React.useRef<Array<{ audio: string; mimeType?: string }>>(
-    [],
-  );
-  const playingRef = React.useRef(false);
-  const playbackTimeRef = React.useRef(0);
-  const audioContextRef = React.useRef<AudioContext | null>(null);
-  const inputContextRef = React.useRef<AudioContext | null>(null);
-  const inputStreamRef = React.useRef<MediaStream | null>(null);
-  const inputSourceRef = React.useRef<MediaStreamAudioSourceNode | null>(null);
-  const inputProcessorRef = React.useRef<ScriptProcessorNode | null>(null);
-  const inputGainRef = React.useRef<GainNode | null>(null);
-  const ownsInputStreamRef = React.useRef(false);
-  const ownsInputContextRef = React.useRef(false);
-  const vadIntervalRef = React.useRef<number | null>(null);
-  const recordingRef = React.useRef(false);
-  const voiceStartedRef = React.useRef(false);
-  const lastVoiceAtRef = React.useRef(0);
-  const endOfTurnSentRef = React.useRef(false);
-  const userActivatedRef = React.useRef(false);
-  const readyRef = React.useRef(false);
-  const autoEnableAttemptedRef = React.useRef(false);
-  const autoRecordTimerRef = React.useRef<number | null>(null);
-  const startRetryTimerRef = React.useRef<number | null>(null);
-
-  const clearAutoRecordTimer = React.useCallback(() => {
-    if (typeof window === "undefined") return;
-    if (autoRecordTimerRef.current !== null) {
-      window.clearTimeout(autoRecordTimerRef.current);
-      autoRecordTimerRef.current = null;
-    }
-  }, []);
-
-  const clearStartRetryTimer = React.useCallback(() => {
-    if (typeof window === "undefined") return;
-    if (startRetryTimerRef.current !== null) {
-      window.clearTimeout(startRetryTimerRef.current);
-      startRetryTimerRef.current = null;
-    }
-  }, []);
-
-  const stopVadLoop = React.useCallback(() => {
-    if (typeof window === "undefined") return;
-    if (vadIntervalRef.current !== null) {
-      window.clearInterval(vadIntervalRef.current);
-      vadIntervalRef.current = null;
-    }
-  }, []);
-
   React.useEffect(() => {
     statusRef.current = status;
   }, [status]);
 
-  const sendEndOfTurn = React.useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (endOfTurnSentRef.current) return;
-    endOfTurnSentRef.current = true;
-    recordingRef.current = false;
-    stopVadLoop();
-    wsRef.current.send(
-      JSON.stringify({
-        type: "input_audio",
-        audio: "",
-        mime_type: "audio/pcm",
-        end_of_turn: true,
-      }),
-    );
-    setStatus("ready");
-  }, [stopVadLoop]);
+  // All mutable state in refs to avoid re-render cascades
+  const wsRef = React.useRef<WebSocket | null>(null);
+  const audioContextRef = React.useRef<AudioContext | null>(null);
+  const streamRef = React.useRef<MediaStream | null>(null);
+  const sourceRef = React.useRef<MediaStreamAudioSourceNode | null>(null);
+  const processorRef = React.useRef<ScriptProcessorNode | null>(null);
+  const playContextRef = React.useRef<AudioContext | null>(null);
+  const playQueueRef = React.useRef<Array<{ audio: string; mime: string }>>([]);
+  const isPlayingRef = React.useRef(false);
+  const nextPlayTimeRef = React.useRef(0);
+  const pendingPcmByteRef = React.useRef<Uint8Array | null>(null);
+  const completionSentRef = React.useRef(false);
 
-  const sendAudioChunk = React.useCallback((chunk: Int16Array) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (!recordingRef.current) return;
-    wsRef.current.send(
-      JSON.stringify({
-        type: "input_audio",
-        audio: arrayBufferToBase64(chunk.buffer),
-        mime_type: "audio/pcm",
-        end_of_turn: false,
-      }),
-    );
+  const micStartedRef = React.useRef(false);
+  const voiceStartedRef = React.useRef(false);
+  const lastVoiceAtRef = React.useRef(0);
+  const endOfTurnSentRef = React.useRef(false);
+  const vadIntervalRef = React.useRef<number | null>(null);
+  const mountedRef = React.useRef(true);
+  const onCompleteRef = React.useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  // Send audio chunk to server
+  const sendAudioChunk = React.useCallback((int16: Int16Array) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    // Don't send audio after end_of_turn has been sent
+    if (endOfTurnSentRef.current) return;
+    ws.send(JSON.stringify({
+      type: "input_audio",
+      audio: arrayBufferToBase64(int16.buffer as ArrayBuffer),
+      mime_type: "audio/pcm",
+      end_of_turn: false,
+    }));
   }, []);
 
-  const ensureInputPipeline = React.useCallback(async () => {
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setError("Voice recording isn't supported in this browser.");
-      setStatus("error");
-      throw new Error("media_devices_unavailable");
-    }
-    setError("");
-    let stream = inputStreamRef.current;
-    if (!stream) {
-      if (initialStream) {
-        stream = initialStream;
-        inputStreamRef.current = stream;
-        ownsInputStreamRef.current = false;
-      }
-    }
-    if (!stream) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
-      } catch {
-        setError("Microphone access is blocked. Enable it and try again.");
-        setStatus("error");
-        throw new Error("mic_blocked");
-      }
-      inputStreamRef.current = stream;
-      ownsInputStreamRef.current = true;
-    }
-    let context = inputContextRef.current;
-    if (!context) {
-      if (initialInputContext) {
-        context = initialInputContext;
-        inputContextRef.current = context;
-        ownsInputContextRef.current = false;
-      }
-    }
-    if (!context) {
-      context = new AudioContext();
-      inputContextRef.current = context;
-      ownsInputContextRef.current = true;
-    }
-    if (context.state === "suspended") {
-      await context.resume();
-    }
-    if (!inputSourceRef.current) {
-      inputSourceRef.current = context.createMediaStreamSource(stream);
-    }
-    if (!inputProcessorRef.current) {
-      const processor = context.createScriptProcessor(INPUT_BUFFER_SIZE, 1, 1);
-      processor.onaudioprocess = (event) => {
-        if (!recordingRef.current) return;
-        const inputBuffer = event.inputBuffer.getChannelData(0);
-        const rms = computeRms(inputBuffer);
-        if (rms >= VAD_MIN_RMS) {
-          voiceStartedRef.current = true;
-          lastVoiceAtRef.current = Date.now();
-          endOfTurnSentRef.current = false;
-        }
-        const downsampled = downsampleBuffer(
-          inputBuffer,
-          context.sampleRate,
-          TARGET_SAMPLE_RATE,
-        );
-        const int16 = pcmFloatTo16BitPCM(downsampled);
-        sendAudioChunk(int16);
-      };
-      inputProcessorRef.current = processor;
-      const gain = context.createGain();
-      gain.gain.value = 0;
-      inputGainRef.current = gain;
-      processor.connect(gain);
-      gain.connect(context.destination);
-      inputSourceRef.current.connect(processor);
-    }
-  }, [initialInputContext, initialStream, sendAudioChunk]);
+  // Send end of turn signal
+  const sendEndOfTurn = React.useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (endOfTurnSentRef.current) return;
+    console.log("[LiveAssistant] Sending end_of_turn");
+    endOfTurnSentRef.current = true;
+    setWaitingForResponse(true);
+    ws.send(JSON.stringify({
+      type: "input_audio",
+      audio: "",
+      mime_type: "audio/pcm",
+      end_of_turn: true,
+    }));
+  }, []);
 
+  // Start VAD loop
   const startVadLoop = React.useCallback(() => {
-    if (typeof window === "undefined") return;
-    if (vadIntervalRef.current !== null) return;
+    if (vadIntervalRef.current) return;
     vadIntervalRef.current = window.setInterval(() => {
-      if (!recordingRef.current || !voiceStartedRef.current) return;
+      if (!micStartedRef.current || !voiceStartedRef.current) return;
       if (endOfTurnSentRef.current) return;
       const silenceMs = Date.now() - lastVoiceAtRef.current;
       if (silenceMs >= VAD_SILENCE_MS) {
@@ -345,313 +212,322 @@ export function LiveAssistant({
     }, VAD_CHECK_INTERVAL_MS);
   }, [sendEndOfTurn]);
 
-  const teardownMedia = React.useCallback(() => {
-    clearAutoRecordTimer();
-    clearStartRetryTimer();
-    stopVadLoop();
-    recordingRef.current = false;
-    if (inputProcessorRef.current) {
-      inputProcessorRef.current.disconnect();
-      inputProcessorRef.current = null;
+  // Stop VAD loop
+  const stopVadLoop = React.useCallback(() => {
+    if (vadIntervalRef.current) {
+      window.clearInterval(vadIntervalRef.current);
+      vadIntervalRef.current = null;
     }
-    if (inputSourceRef.current) {
-      inputSourceRef.current.disconnect();
-      inputSourceRef.current = null;
-    }
-    if (inputGainRef.current) {
-      inputGainRef.current.disconnect();
-      inputGainRef.current = null;
-    }
-    if (inputStreamRef.current) {
-      if (ownsInputStreamRef.current) {
-        inputStreamRef.current.getTracks().forEach((track) => track.stop());
-      }
-      inputStreamRef.current = null;
-    }
-    if (inputContextRef.current) {
-      if (ownsInputContextRef.current) {
-        inputContextRef.current.close().catch(() => undefined);
-      }
-      inputContextRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => undefined);
-      audioContextRef.current = null;
-    }
-  }, [clearAutoRecordTimer, clearStartRetryTimer, stopVadLoop]);
+  }, []);
 
-  const stopRecording = React.useCallback(() => {
-    recordingRef.current = false;
-    stopVadLoop();
-    setStatus("ready");
-  }, [stopVadLoop]);
-
-  const startRecording = React.useCallback(async () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
-    if (!userActivatedRef.current) return false;
-    if (recordingRef.current) return true;
-    try {
-      await ensureInputPipeline();
-    } catch {
-      return false;
-    }
-    endOfTurnSentRef.current = false;
+  // Start mic pipeline - called when "ready" is received
+  const startMicPipeline = React.useCallback(async () => {
+    if (micStartedRef.current) return;
+    micStartedRef.current = true;
     voiceStartedRef.current = false;
     lastVoiceAtRef.current = Date.now();
-    recordingRef.current = true;
-    setMicEnabled(true);
-    setStatus("recording");
-    startVadLoop();
-    return true;
-  }, [ensureInputPipeline, startVadLoop]);
+    endOfTurnSentRef.current = false;
 
-  const attemptStartRecording = React.useCallback(async () => {
-    if (!userActivatedRef.current) return;
-    if (!readyRef.current) return;
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (recordingRef.current) return;
-    const started = await startRecording();
-    if (!started && typeof window !== "undefined") {
-      clearStartRetryTimer();
-      startRetryTimerRef.current = window.setTimeout(() => {
-        startRetryTimerRef.current = null;
-        void attemptStartRecording();
-      }, 300);
+    try {
+      // Get microphone
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      // Create audio context
+      const ctx = new AudioContext();
+      audioContextRef.current = ctx;
+
+      // Create source from stream
+      const source = ctx.createMediaStreamSource(stream);
+      sourceRef.current = source;
+
+      // Create processor
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      processor.onaudioprocess = (event) => {
+        const inputBuffer = event.inputBuffer.getChannelData(0);
+        const rms = computeRms(inputBuffer);
+
+        // Update level display
+        if (mountedRef.current) {
+          setAudioLevel(Math.min(1, rms / 0.1));
+        }
+
+        // VAD: detect voice
+        if (rms >= VAD_MIN_RMS) {
+          voiceStartedRef.current = true;
+          lastVoiceAtRef.current = Date.now();
+          endOfTurnSentRef.current = false;
+        }
+
+        // Downsample and send
+        const downsampled = downsampleBuffer(inputBuffer, ctx.sampleRate, TARGET_SAMPLE_RATE);
+        const int16 = pcmFloatTo16BitPCM(downsampled);
+        sendAudioChunk(int16);
+      };
+
+      // Connect: source -> processor -> destination
+      source.connect(processor);
+      processor.connect(ctx.destination);
+
+      // Start VAD
+      startVadLoop();
+
+      if (mountedRef.current) {
+        setStatus("recording");
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        setError("Microphone access denied. Please allow microphone access.");
+        setStatus("error");
+      }
     }
-  }, [clearStartRetryTimer, startRecording]);
+  }, [sendAudioChunk, startVadLoop]);
 
-  const scheduleAutoRecord = React.useCallback(
-    (delayMs = 200) => {
-      if (typeof window === "undefined") return;
-      if (!userActivatedRef.current) return;
-      clearAutoRecordTimer();
-      autoRecordTimerRef.current = window.setTimeout(() => {
-        autoRecordTimerRef.current = null;
-        void startRecording();
-      }, delayMs);
-    },
-    [clearAutoRecordTimer, startRecording],
-  );
+  // Stop mic pipeline
+  const stopMicPipeline = React.useCallback(() => {
+    micStartedRef.current = false;
+    stopVadLoop();
 
-  const playNext = React.useCallback(() => {
-    if (playingRef.current) return;
-    const next = queueRef.current.shift();
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (sourceRef.current) {
+      sourceRef.current.disconnect();
+      sourceRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+  }, [stopVadLoop]);
+
+  // Play audio chunk - Gemini Live API returns raw PCM 24kHz 16-bit little-endian
+  const playAudioChunk = React.useCallback(async (audioB64: string, mimeType?: string) => {
+    if (!playContextRef.current) {
+      playContextRef.current = new AudioContext();
+    }
+    const ctx = playContextRef.current;
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+
+    const buffer = base64ToArrayBuffer(audioB64);
+    const normalizedMime = normalizeMimeType(mimeType);
+    let audioBuffer: AudioBuffer | null = null;
+    const bytes = new Uint8Array(buffer);
+    const shouldDecodeWav =
+      (normalizedMime && isWavMimeType(normalizedMime)) || isWavHeader(bytes);
+
+    if (shouldDecodeWav) {
+      try {
+        audioBuffer = await ctx.decodeAudioData(buffer.slice(0));
+      } catch {
+        audioBuffer = null;
+      }
+    }
+
+    if (!audioBuffer) {
+      const sampleRate = parseSampleRate(normalizedMime, 24000);
+      let pcmBytes = new Uint8Array(buffer);
+      if (pendingPcmByteRef.current) {
+        const pending = pendingPcmByteRef.current;
+        const merged = new Uint8Array(pending.length + pcmBytes.length);
+        merged.set(pending, 0);
+        merged.set(pcmBytes, pending.length);
+        pcmBytes = merged;
+        pendingPcmByteRef.current = null;
+      }
+      if (pcmBytes.length % 2 !== 0) {
+        pendingPcmByteRef.current = pcmBytes.slice(pcmBytes.length - 1);
+        pcmBytes = pcmBytes.slice(0, pcmBytes.length - 1);
+      }
+      audioBuffer = pcm16ToAudioBuffer(ctx, pcmBytes.buffer, sampleRate);
+    }
+
+    const src = ctx.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(ctx.destination);
+    const now = ctx.currentTime;
+    if (nextPlayTimeRef.current < now) {
+      nextPlayTimeRef.current = now;
+    }
+    src.start(nextPlayTimeRef.current);
+    nextPlayTimeRef.current += audioBuffer.duration;
+
+    return new Promise<void>(resolve => {
+      src.onended = () => resolve();
+    });
+  }, []);
+
+  // Process play queue
+  const processPlayQueue = React.useCallback(async () => {
+    if (isPlayingRef.current) return;
+    const next = playQueueRef.current.shift();
     if (!next) {
-      scheduleAutoRecord();
+      // Queue empty - reset end of turn flag so we can send again
+      endOfTurnSentRef.current = false;
+      voiceStartedRef.current = false;
+      setWaitingForResponse(false);
+      // Auto-restart mic for continuous conversation after playback ends
+      if (mountedRef.current && !micStartedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+        endOfTurnSentRef.current = false;
+        startMicPipeline();
+      }
       return;
     }
-    playingRef.current = true;
-    const playChunk = async () => {
-      try {
-        if (!audioContextRef.current) {
-          audioContextRef.current = new AudioContext();
-        }
-        const context = audioContextRef.current;
-        if (context.state === "suspended") {
-          await context.resume();
-        }
-        const buffer = base64ToArrayBuffer(next.audio);
-        try {
-          const decoded = await context.decodeAudioData(buffer.slice(0));
-          await new Promise<void>((resolve) => {
-            const src = context.createBufferSource();
-            src.buffer = decoded;
-            src.connect(context.destination);
-            const now = context.currentTime;
-            if (playbackTimeRef.current < now) {
-              playbackTimeRef.current = now;
-            }
-            src.onended = () => resolve();
-            src.start(playbackTimeRef.current);
-            playbackTimeRef.current += decoded.duration;
-          });
-          return;
-        } catch {
-          const sampleRate = parseSampleRate(next.mimeType) ?? 24000;
-          const float32 = pcm16leToFloat32(buffer);
-          const audioBuffer = context.createBuffer(
-            1,
-            float32.length,
-            sampleRate,
-          );
-          audioBuffer.copyToChannel(float32, 0);
-          await new Promise<void>((resolve) => {
-            const src = context.createBufferSource();
-            src.buffer = audioBuffer;
-            src.connect(context.destination);
-            const now = context.currentTime;
-            if (playbackTimeRef.current < now) {
-              playbackTimeRef.current = now;
-            }
-            src.onended = () => resolve();
-            src.start(playbackTimeRef.current);
-            playbackTimeRef.current += audioBuffer.duration;
-          });
-        }
-      } finally {
-        playingRef.current = false;
-        playNext();
-      }
-    };
-    void playChunk();
-  }, [scheduleAutoRecord]);
 
-  const handleSocketMessage = React.useCallback(
-    (event: MessageEvent) => {
-      try {
-        const payload = JSON.parse(event.data) as {
-          type?: string;
-          message?: string;
-          text?: string;
-          audio?: string;
-          mime_type?: string;
-          payload?: string;
-        };
-        switch (payload.type) {
-          case "ready":
-            setStatus("ready");
-            setError("");
-            statusRef.current = "ready";
-            readyRef.current = true;
-            void attemptStartRecording();
-            return;
-          case "assistant_text":
-            return;
-          case "assistant_audio":
-            if (payload.audio) {
-              clearAutoRecordTimer();
-              stopRecording();
-              queueRef.current.push({
-                audio: payload.audio,
-                mimeType: payload.mime_type || "audio/wav",
-              });
-              playNext();
-            }
-            return;
-          case "style_payload": {
-            const stylePayload = payload.payload?.trim();
-            if (!stylePayload) {
-              setError(
-                "We couldn't capture the style summary. Please try the live assistant again.",
-              );
-              setStatus("error");
-              return;
-            }
-            onComplete({ stylePayload });
-            wsRef.current?.close();
-            return;
-          }
-          case "error":
-            setError(payload.message || "Live assistant error.");
-            setStatus("error");
-            return;
-          default:
-            return;
-        }
-      } catch {
-        // Ignore non-JSON frames.
-      }
-    },
-    [
-      clearAutoRecordTimer,
-      onComplete,
-      playNext,
-      scheduleAutoRecord,
-      stopRecording,
-    ],
-  );
-
-  const connect = React.useCallback(() => {
-    if (wsRef.current) {
-      if (
-        wsRef.current.readyState !== WebSocket.CLOSED &&
-        wsRef.current.readyState !== WebSocket.CLOSING
-      ) {
-        return;
-      }
-      wsRef.current = null;
+    isPlayingRef.current = true;
+    try {
+      await playAudioChunk(next.audio, next.mime);
+    } finally {
+      isPlayingRef.current = false;
+      processPlayQueue();
     }
+  }, [playAudioChunk, startMicPipeline]);
+
+  // Handle WebSocket messages
+  const handleMessage = React.useCallback((event: MessageEvent) => {
+    try {
+      const msg = JSON.parse(event.data);
+      console.log("[LiveAssistant] Received message type:", msg.type);
+
+      if (msg.type === "ready") {
+        setStatus("ready");
+        // Start mic immediately when ready - just like the working utility
+        startMicPipeline();
+      } else if (msg.type === "assistant_audio" && msg.audio) {
+        // Queue audio for playback
+        playQueueRef.current.push({ audio: msg.audio, mime: msg.mime_type || "audio/pcm;rate=24000" });
+        processPlayQueue();
+      } else if (msg.type === "style_payload" && msg.payload) {
+        console.log("[LiveAssistant] Received style_payload, calling onComplete");
+        completionSentRef.current = true;
+        onCompleteRef.current({ stylePayload: msg.payload.trim() });
+        // Close WebSocket cleanly after receiving payload
+        wsRef.current?.close();
+      } else if (msg.type === "session_end") {
+        // Session complete - close WebSocket
+        if (!completionSentRef.current) {
+          completionSentRef.current = true;
+          onCompleteRef.current({ stylePayload: "" });
+        }
+        wsRef.current?.close();
+      } else if (msg.type === "error") {
+        setError(msg.message || "Live assistant error");
+        setStatus("error");
+      }
+    } catch {
+      // Ignore non-JSON
+    }
+  }, [startMicPipeline, processPlayQueue]);
+
+  // Track if we're currently connecting to prevent race conditions
+  const connectingRef = React.useRef(false);
+
+  // Connect WebSocket
+  const connect = React.useCallback(() => {
+    if (wsRef.current) return;
+    if (connectingRef.current) return;
+    connectingRef.current = true;
+
     setStatus("connecting");
     setError("");
+
     const ws = new WebSocket(buildWebSocketUrl("/api/live"));
     wsRef.current = ws;
+
     ws.onopen = () => {
-      ws.send(
-        JSON.stringify({
-          type: "config",
-          response_modalities: ["AUDIO"],
-        }),
-      );
-      if (userActivatedRef.current) {
-        void attemptStartRecording();
+      connectingRef.current = false;
+      ws.send(JSON.stringify({ type: "config", response_modalities: ["AUDIO"] }));
+    };
+
+    ws.onmessage = handleMessage;
+
+    ws.onerror = () => {
+      connectingRef.current = false;
+      wsRef.current = null;
+      setError("Failed to connect to live assistant");
+      setStatus("error");
+      setWaitingForResponse(false);
+    };
+
+    ws.onclose = () => {
+      console.log("[LiveAssistant] WebSocket closed");
+      connectingRef.current = false;
+      wsRef.current = null;
+      stopMicPipeline();
+      // Reset endOfTurnSentRef so we can send audio on reconnect
+      endOfTurnSentRef.current = false;
+      voiceStartedRef.current = false;
+      // Reset waiting state when connection closes unexpectedly
+      setWaitingForResponse(false);
+      if (mountedRef.current) {
+        // If we were waiting for a response and connection closed, show error
+        setStatus((prev) => {
+          if (prev === "error") return "error";
+          // If connection closed normally after receiving payload, that's ok
+          return "idle";
+        });
       }
     };
-    ws.onmessage = handleSocketMessage;
-    ws.onerror = () => {
-      setError("Unable to connect to the live assistant.");
-      setStatus("error");
-    };
-    ws.onclose = () => {
-      wsRef.current = null;
-      stopRecording();
-      setStatus((prev) => (prev === "error" ? prev : "idle"));
-    };
-  }, [attemptStartRecording, handleSocketMessage, stopRecording]);
+  }, [handleMessage, stopMicPipeline]);
 
-  const resetSession = React.useCallback(() => {
-    wsRef.current?.close();
-    wsRef.current = null;
-    queueRef.current = [];
-    playingRef.current = false;
-    playbackTimeRef.current = 0;
-    userActivatedRef.current = false;
-    readyRef.current = false;
-    teardownMedia();
-    setError("");
-    setMicEnabled(false);
-    setStatus("idle");
-  }, [teardownMedia]);
+  // Cleanup everything
+  const cleanup = React.useCallback(() => {
+    stopMicPipeline();
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (playContextRef.current) {
+      playContextRef.current.close();
+      playContextRef.current = null;
+    }
+    playQueueRef.current = [];
+    isPlayingRef.current = false;
+    nextPlayTimeRef.current = 0;
+    pendingPcmByteRef.current = null;
+    completionSentRef.current = false;
+  }, [stopMicPipeline]);
+
+  // Restart session - go back to selection page
+  const onBackRef = React.useRef(onBack);
+  onBackRef.current = onBack;
 
   const restartSession = React.useCallback(() => {
-    resetSession();
-    connect();
-  }, [connect, resetSession]);
-
-  const handleEnableMic = React.useCallback(async () => {
-    userActivatedRef.current = true;
-    try {
-      await ensureInputPipeline();
-      setMicEnabled(true);
-    } catch {
-      return;
+    cleanup();
+    if (onBackRef.current) {
+      onBackRef.current();
     }
-    await attemptStartRecording();
-  }, [attemptStartRecording, ensureInputPipeline]);
+  }, [cleanup]);
 
+  // Connect on mount with auto-retry
   React.useEffect(() => {
-    if (!autoEnableMic) return;
-    if (autoEnableAttemptedRef.current) return;
-    autoEnableAttemptedRef.current = true;
-    void handleEnableMic();
-  }, [autoEnableMic, handleEnableMic]);
-
-  React.useEffect(() => {
-    if (initialStream && !userActivatedRef.current) {
-      userActivatedRef.current = true;
-      setMicEnabled(true);
-      void attemptStartRecording();
-    }
-  }, [attemptStartRecording, initialStream]);
-
-  React.useEffect(() => {
+    mountedRef.current = true;
+    
+    // Try to connect initially
     connect();
+    
+    // Set up a retry if initial connection fails after 2 seconds
+    const retryTimer = setTimeout(() => {
+      if (mountedRef.current && !wsRef.current && statusRef.current !== "recording" && statusRef.current !== "ready") {
+        connect();
+      }
+    }, 2000);
+
     return () => {
-      const current = wsRef.current;
-      wsRef.current = null;
-      current?.close();
-      teardownMedia();
+      mountedRef.current = false;
+      clearTimeout(retryTimer);
+      cleanup();
     };
-  }, [connect, teardownMedia]);
+  }, []); // Empty deps - only run once on mount
 
   return (
     <div className="space-y-8">
@@ -661,40 +537,63 @@ export function LiveAssistant({
         </h2>
       </div>
 
-      {error ? (
-        <p role="alert" className="text-xs text-text sm:text-sm">
-          {error}
-        </p>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-3">
-        {!micEnabled ? (
+      {error && (
+        <div role="alert" className="space-y-3">
+          <p className="text-xs text-text sm:text-sm">{error}</p>
           <Button
-            tone="ghost"
-            onClick={handleEnableMic}
+            onClick={connect}
             className="text-xs sm:text-sm"
           >
-            Enable microphone
+            Reconnect
           </Button>
-        ) : null}
+        </div>
+      )}
 
+      <div className="space-y-2 rounded-lg bg-glass-highlight/10 p-4">
+        <div className="flex items-center justify-between text-xs text-text/70">
+          <span>Status: {status}</span>
+          <span>{micStartedRef.current ? "Mic Active" : "Mic Inactive"}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-text/70">Mic Level:</span>
+          <div className="flex-1 h-3 bg-glass-highlight/20 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gold transition-[width] duration-75"
+              style={{ width: `${Math.round(audioLevel * 100)}%` }}
+            />
+          </div>
+          <span className="text-xs text-text/70 w-8">{Math.round(audioLevel * 100)}%</span>
+        </div>
+        <div className="flex gap-1">
+          {Array.from({ length: 20 }).map((_, i) => (
+            <div
+              key={i}
+              className={`h-4 w-1.5 rounded-sm transition-colors duration-75 ${
+                audioLevel * 20 > i ? "bg-gold" : "bg-glass-highlight/30"
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
         <Button
-          tone="ghost"
-          onClick={restartSession}
+          onClick={sendEndOfTurn}
+          disabled={status !== "recording" || waitingForResponse}
           className="text-xs sm:text-sm"
         >
-          Restart session
+          {waitingForResponse ? "Waiting..." : "Done speaking"}
         </Button>
 
-        {onBack ? (
+        {onBack && (
           <Button
             tone="ghost"
-            onClick={onBack}
+            onClick={restartSession}
             className="text-xs sm:text-sm"
           >
             Back
           </Button>
-        ) : null}
+        )}
       </div>
     </div>
   );
