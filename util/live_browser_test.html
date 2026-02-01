@@ -46,12 +46,12 @@
         const scheme = window.location.protocol === "https:" ? "wss" : "ws";
         const host = window.location.hostname || "127.0.0.1";
         // Codespaces forwarded ports use hostnames like:
-        // <name>-8000.app.github.dev. Map that to -5002 automatically.
+        // <name>-8000.app.github.dev. Map that to -5001 automatically.
         const codespacesMatch = host.match(/^(.*)-8000\.app\.github\.dev$/);
         if (codespacesMatch) {
-          return `${scheme}://${codespacesMatch[1]}-5002.app.github.dev/api/live`;
+          return `${scheme}://${codespacesMatch[1]}-5001.app.github.dev/api/live`;
         }
-        return `${scheme}://${host}:5002/api/live`;
+        return `${scheme}://${host}:5001/api/live`;
       })();
       wsUrlInput.value = defaultWsUrl;
 
