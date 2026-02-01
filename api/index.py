@@ -689,7 +689,8 @@ def _coerce_message(raw):
 async def _send_json(ws, payload):
     try:
         await asyncio.to_thread(ws.send, json.dumps(payload))
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[LiveSession] send_json failed for payload type={getattr(payload,'get',lambda k:'?')('type') if isinstance(payload,dict) else type(payload)} error={e}")
         return
 
 
@@ -787,6 +788,12 @@ async def _handle_client_message(session, ws, message):
             },
             end_of_turn=bool(end_of_turn),
         )
+        if end_of_turn:
+            # Count completed user turns for fallback gating
+            try:
+                _handle_client_message.user_turns += 1
+            except Exception:
+                _handle_client_message.user_turns = 1
         return True
 
     return True
@@ -794,6 +801,10 @@ async def _handle_client_message(session, ws, message):
 
 async def _handle_live_session(ws, client: genai.Client):
     logger.info("Live session started")
+    session_start_ts = time.time()
+    user_turns = 0
+    _handle_client_message.user_turns = 0
+    last_activity = time.time()
     session_config = {
         "system_instruction": STYLE_INVESTIGATOR_INSTRUCTION,
         "response_modalities": DEFAULT_LIVE_MODALITIES,
@@ -865,6 +876,12 @@ async def _handle_live_session(ws, client: genai.Client):
             buffer = ""
             recent_text = ""
             recent_text_limit = 8000
+            force_timeout_task = None
+            pending_force_task = None
+
+            def _touch_activity():
+                nonlocal last_activity
+                last_activity = time.time()
 
             def _append_recent_text(chunk: str):
                 nonlocal recent_text
@@ -873,6 +890,7 @@ async def _handle_live_session(ws, client: genai.Client):
                 recent_text += chunk
                 if len(recent_text) > recent_text_limit:
                     recent_text = recent_text[-recent_text_limit:]
+                _touch_activity()
 
             def _normalized_recent_tail():
                 tail = recent_text[-600:]
@@ -888,12 +906,65 @@ async def _handle_live_session(ws, client: genai.Client):
                 )
                 return " ".join(cleaned.split())
 
+            async def _send_minimal_and_close(reason: str):
+                nonlocal payload_complete
+                if payload_complete:
+                    return True
+                payload_complete = True
+                minimal_payload = f"""{BEGIN_PAYLOAD}
+[USER INTENT]:
+[ESTABLISHED STYLE]:
+[STYLE ASPIRATIONS]:
+[FASHION PERSONALITY]:
+{END_PAYLOAD}"""
+                await _send_json(ws, {"type": "style_payload", "payload": minimal_payload})
+                await asyncio.sleep(0.05)
+                await _send_json(ws, {"type": "session_end", "reason": reason})
+                # Do NOT close server-side; let client close to avoid frame errors
+                return True
+
+            async def _grace_force(reason: str, delay: float = 1.5):
+                nonlocal pending_force_task
+                try:
+                    await asyncio.sleep(delay)
+                    if payload_complete:
+                        return True
+                    return await _send_minimal_and_close(reason)
+                finally:
+                    pending_force_task = None
+
+            async def _schedule_force(reason: str, delay: float = 1.5):
+                nonlocal pending_force_task
+                if payload_complete:
+                    return True
+                if pending_force_task:
+                    return True
+                _touch_activity()
+                pending_force_task = asyncio.create_task(_grace_force(reason, delay))
+                return True
+
             async def _maybe_force_payload():
                 nonlocal payload_complete
                 if in_payload or payload_complete:
                     return False
+                _touch_activity()
                 recent_tail = _normalized_recent_tail()
                 if not recent_tail:
+                    return False
+                # If explicit end phrase is present, bypass thresholds
+                explicit_end = any(
+                    phrase in recent_tail
+                    for phrase in [
+                        "i have gathered enough information",
+                        "i've gathered enough information",
+                        "have gathered enough information",
+                        "that's enough information",
+                    ]
+                )
+                # Don't force early; require some interaction or time unless explicit end
+                elapsed = time.time() - session_start_ts
+                current_turns = getattr(_handle_client_message, "user_turns", 0)
+                if not explicit_end and current_turns < 3 and elapsed < 60:
                     return False
                 if (
                     "concluding the session" in recent_tail
@@ -902,33 +973,46 @@ async def _handle_live_session(ws, client: genai.Client):
                     or "concluding the decision flow" in recent_tail
                     or "concluding decision flow" in recent_tail
                     or "concluding the decision" in recent_tail
+                    or "concluding the discovery phase" in recent_tail
+                    or "concluding discovery phase" in recent_tail
+                    or "discovery phase concluded" in recent_tail
+                    or "concluding the inquiry" in recent_tail
+                    or "concluding inquiry" in recent_tail
+                    or "finalizing the analysis" in recent_tail
+                    or "finalising the analysis" in recent_tail
                     or "natural exit point" in recent_tail
+                    or "acknowledging complete task" in recent_tail
+                    or "acknowledge complete task" in recent_tail
+                    or "confirm the completion" in recent_tail
+                    or "completion of all tasks" in recent_tail
+                    or "completed all tasks" in recent_tail
+                    or "all tasks as per the instructions" in recent_tail
+                    or explicit_end
                 ):
-                    logger.info("[LiveSession] URGENT: Detected concluding marker - forcing payload send")
-                    payload_complete = True
-                    minimal_payload = """---BEGIN_STYLE_PAYLOAD---
-[USER INTENT]:
-[ESTABLISHED STYLE]:
-[STYLE ASPIRATIONS]:
-[FASHION PERSONALITY]:
----END_STYLE_PAYLOAD---"""
-                    await _send_json(ws, {"type": "style_payload", "payload": minimal_payload})
-                    await asyncio.sleep(0.5)
-                    await _send_json(ws, {"type": "session_end", "reason": "concluding_detected"})
-                    await asyncio.sleep(0.5)
-                    await _close_ws(ws)
-                    return True
+                    logger.info(f"[LiveSession] URGENT: Detected concluding marker - forcing payload send; recent_tail='{recent_tail}'")
+                    return await _schedule_force("concluding_detected", 1.5)
 
                 exit_phrases = [
                     "i'll talk to you soon",
                     "ill talk to you soon",
                     "talk to you soon",
+                    "talk to you soon!",
+                    "talk to you soon.",
+                    "talk soon",
+                    "talk soon!",
                     "personalized catalog",
                     "personalised catalogue",
                     "goodbye",
                     "bye for now",
                     "this has been so helpful",
                     "i have a really good sense",
+                    "i have gathered enough information",
+                    "i've gathered enough information",
+                    "have gathered enough information",
+                    "gathered enough information",
+                    "i have enough information",
+                    "i've got enough information",
+                    "that's enough information",
                     "i'm going to get to work",
                     "im going to get to work",
                     "i will get to work",
@@ -942,23 +1026,36 @@ async def _handle_live_session(ws, client: genai.Client):
                     "i will get to work on your personalised catalogue",
                     "i'll get to work on your personalised catalogue",
                     "ill get to work on your personalised catalogue",
+                    "wrap up here",
+                    "that covers everything",
+                    "that's everything i need",
+                    "that is everything i need",
+                    "we're done here",
+                    "we are done here",
                 ]
                 if any(phrase in recent_tail for phrase in exit_phrases):
                     logger.info(f"[LiveSession] Detected natural exit phrase")
-                    payload_complete = True
-                    minimal_payload = """---BEGIN_STYLE_PAYLOAD---
-[USER INTENT]:
-[ESTABLISHED STYLE]:
-[STYLE ASPIRATIONS]:
-[FASHION PERSONALITY]:
----END_STYLE_PAYLOAD---"""
-                    await _send_json(ws, {"type": "style_payload", "payload": minimal_payload})
-                    await asyncio.sleep(0.5)
-                    await _send_json(ws, {"type": "session_end", "reason": "natural_exit_detected"})
-                    await asyncio.sleep(0.5)
-                    await _close_ws(ws)
-                    return True
+                    return await _schedule_force("natural_exit_detected", 1.5)
                 return False
+
+            async def _force_timeout():
+                nonlocal payload_complete
+                nonlocal last_activity
+                try:
+                    while True:
+                        await asyncio.sleep(5)
+                        if payload_complete:
+                            return
+                        idle = time.time() - last_activity
+                        # Only force after long idle (5 minutes) to avoid premature cutoff
+                        if idle >= 300:
+                            break
+                except asyncio.CancelledError:
+                    return
+                if payload_complete:
+                    return
+                logger.info("[LiveSession] Timeout reached without payload - forcing minimal payload")
+                await _schedule_force("timeout_force_payload", 0.5)
 
             async def handle_text_chunk(chunk: str):
                 nonlocal buffer, in_payload, payload_complete
@@ -1030,6 +1127,9 @@ async def _handle_live_session(ws, client: genai.Client):
             async def pump_from_client():
                 if initial_user_message:
                     await _handle_client_message(session, ws, initial_user_message)
+                nonlocal force_timeout_task
+                if force_timeout_task is None:
+                    force_timeout_task = asyncio.create_task(_force_timeout())
                 while True:
                     raw = await asyncio.to_thread(ws.receive)
                     if raw is None:
@@ -1050,6 +1150,9 @@ async def _handle_live_session(ws, client: genai.Client):
                         break
 
             async def pump_from_model():
+                nonlocal force_timeout_task
+                if force_timeout_task is None:
+                    force_timeout_task = asyncio.create_task(_force_timeout())
                 while True:
                     try:
                         turn = session.receive()
@@ -1069,6 +1172,7 @@ async def _handle_live_session(ws, client: genai.Client):
                                         if getattr(part, "thought", None):
                                             await handle_signal_chunk(str(part.thought))
                                         if getattr(part, "inline_data", None):
+                                            _touch_activity()
                                             audio_bytes = part.inline_data.data
                                             mime_type = part.inline_data.mime_type or "audio/pcm;rate=24000"
                                             audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
@@ -1084,6 +1188,7 @@ async def _handle_live_session(ws, client: genai.Client):
                             if getattr(response, "thought", None):
                                 await handle_signal_chunk(str(response.thought))
                             if getattr(response, "data", None):
+                                last_activity = time.time()
                                 audio_bytes = response.data
                                 mime_type = getattr(response, "mime_type", None) or "audio/pcm;rate=24000"
                                 audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
@@ -1108,6 +1213,7 @@ async def _handle_live_session(ws, client: genai.Client):
                                             if getattr(part, "thought", None):
                                                 await handle_signal_chunk(str(part.thought))
                                             if getattr(part, "inline_data", None):
+                                                _touch_activity()
                                                 audio_bytes = part.inline_data.data
                                                 mime_type = part.inline_data.mime_type or "audio/pcm;rate=24000"
                                                 audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
@@ -1120,6 +1226,7 @@ async def _handle_live_session(ws, client: genai.Client):
                                 if getattr(message, "thought", None):
                                     await handle_signal_chunk(str(message.thought))
                                 if getattr(message, "data", None):
+                                    _touch_activity()
                                     audio_bytes = message.data
                                     mime_type = getattr(message, "mime_type", None) or "audio/pcm;rate=24000"
                                     audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
@@ -1136,6 +1243,9 @@ async def _handle_live_session(ws, client: genai.Client):
                 [client_task, model_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
+
+            if force_timeout_task:
+                force_timeout_task.cancel()
 
             for task in pending:
                 task.cancel()

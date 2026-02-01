@@ -160,11 +160,13 @@ export function ColdStart() {
   }, [router]);
 
   const totalQuestions = COLD_START_QUESTIONS.length;
-  const zipStepIndex = totalQuestions;
-  const styleStepIndex = totalQuestions + 1;
-  const totalSteps = totalQuestions + 2;
+  const hasStyleStep = startMode !== "live";
+  // For guide: style first, then zip. For live: only zip.
+  const styleStepIndex = hasStyleStep ? totalQuestions : -1;
+  const zipStepIndex = hasStyleStep ? totalQuestions + 1 : totalQuestions;
+  const totalSteps = totalQuestions + (hasStyleStep ? 2 : 1);
+  const isStyleStep = hasStyleStep && stepIndex === styleStepIndex;
   const isZipStep = stepIndex === zipStepIndex;
-  const isStyleStep = stepIndex === styleStepIndex;
   const hasZipCode = Boolean(answers.zipCode.trim());
   const question =
     isZipStep || isStyleStep ? null : COLD_START_QUESTIONS[stepIndex];
@@ -216,10 +218,13 @@ export function ColdStart() {
   }
 
   function goNext() {
-    if (isStyleStep) return;
     if (isZipStep) {
+      finish();
+      return;
+    }
+    if (isStyleStep) {
       setError("");
-      setStepIndex((i) => Math.min(styleStepIndex, i + 1));
+      setStepIndex(zipStepIndex);
       return;
     }
     if (!selectedValues.length) {
@@ -227,12 +232,12 @@ export function ColdStart() {
       return;
     }
     setError("");
-    setStepIndex((i) => Math.min(styleStepIndex, i + 1));
+    setStepIndex((i) => Math.min(zipStepIndex, i + 1));
   }
 
   async function finish() {
     if (isSaving) return;
-    const trimmed = styleText.trim();
+    const trimmed = styleText.trim() || answers.styleNote.trim();
 
     const sessionId = createLocalSessionId();
     const nextAnswers: ColdStartAnswers = {
@@ -272,7 +277,8 @@ export function ColdStart() {
         styleNote: stylePayload,
       }));
       setStyleText(stylePayload);
-      setStartMode("guide");
+      // Skip style step in live; go directly to zip step
+      setStartMode("live");
       setStepIndex(zipStepIndex);
     },
     [zipStepIndex],

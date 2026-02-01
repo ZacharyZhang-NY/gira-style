@@ -36,6 +36,24 @@ function base64ToArrayBuffer(base64: string) {
   return bytes.buffer;
 }
 
+function isEmptyStylePayload(payload: string) {
+  if (!payload) return true;
+  const trimmed = payload.trim();
+  if (!trimmed) return true;
+  const withoutMarkers = trimmed
+    .replace(/---begin_style_payload---/gi, "")
+    .replace(/---end_style_payload---/gi, "")
+    .trim();
+  if (!withoutMarkers) return true;
+  const cleaned = withoutMarkers
+    .replace(/\[user intent\]:?\s*/gi, "")
+    .replace(/\[established style\]:?\s*/gi, "")
+    .replace(/\[style aspirations\]:?\s*/gi, "")
+    .replace(/\[fashion personality\]:?\s*/gi, "")
+    .trim();
+  return !cleaned;
+}
+
 function normalizeMimeType(mimeType?: string) {
   return (mimeType || "").trim().toLowerCase();
 }
@@ -124,15 +142,24 @@ function pcmFloatTo16BitPCM(input: Float32Array) {
 
 function buildWebSocketUrl(path: string) {
   if (typeof window === "undefined") return path;
-  const { hostname, protocol } = window.location;
-  if (hostname === "localhost" || hostname === "127.0.0.1") {
+  const { hostname, protocol, port } = window.location;
+  const isLocalHost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("10.") ||
+    hostname.endsWith(".local");
+
+  // Dev/local networks always talk to port 5001
+  if (isLocalHost) {
     return `ws://${hostname}:5001${path}`;
   }
   if (hostname.endsWith(".vercel.app")) {
     return `wss://aritzia.girastyleai.com${path}`;
   }
   const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
-  return `${wsProtocol}//${hostname}${path}`;
+  const portPart = port ? `:${port}` : "";
+  return `${wsProtocol}//${hostname}${portPart}${path}`;
 }
 
 export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
@@ -159,6 +186,11 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const nextPlayTimeRef = React.useRef(0);
   const pendingPcmByteRef = React.useRef<Uint8Array | null>(null);
   const completionSentRef = React.useRef(false);
+  const pendingStylePayloadRef = React.useRef<string | null>(null);
+  const sessionEndedRef = React.useRef(false);
+  const payloadReceivedRef = React.useRef(false);
+  const lastAssistantAudioAtRef = React.useRef<number | null>(null);
+  const completeDelayTimerRef = React.useRef<number | null>(null);
 
   const micStartedRef = React.useRef(false);
   const voiceStartedRef = React.useRef(false);
@@ -168,6 +200,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const mountedRef = React.useRef(true);
   const onCompleteRef = React.useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const completedRef = React.useRef(false);
 
   // Send audio chunk to server
   const sendAudioChunk = React.useCallback((int16: Int16Array) => {
@@ -277,7 +310,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       if (mountedRef.current) {
         setStatus("recording");
       }
-    } catch (err) {
+    } catch {
       if (mountedRef.current) {
         setError("Microphone access denied. Please allow microphone access.");
         setStatus("error");
@@ -307,6 +340,46 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       audioContextRef.current = null;
     }
   }, [stopVadLoop]);
+
+  const maybeComplete = React.useCallback(() => {
+    if (completionSentRef.current) return;
+    if (!payloadReceivedRef.current) return;
+
+    const queueEmpty = playQueueRef.current.length === 0 && !isPlayingRef.current;
+    if (!queueEmpty) return;
+
+    const now = performance.now();
+    const lastAudio = lastAssistantAudioAtRef.current ?? now;
+    const elapsed = now - lastAudio;
+    const remaining = 10000 - elapsed; // 10s grace after last assistant audio
+
+    // If we never saw explicit session_end but audio/payload are done and grace elapsed, force end
+    if (!sessionEndedRef.current && remaining <= 0) {
+      sessionEndedRef.current = true;
+    }
+
+    if (remaining > 0) {
+      if (completeDelayTimerRef.current) {
+        window.clearTimeout(completeDelayTimerRef.current);
+      }
+      completeDelayTimerRef.current = window.setTimeout(() => {
+        completeDelayTimerRef.current = null;
+        maybeComplete();
+      }, remaining);
+      return;
+    }
+
+    completionSentRef.current = true;
+    completedRef.current = true;
+    const payload = pendingStylePayloadRef.current;
+    onCompleteRef.current({
+      stylePayload: payload && !isEmptyStylePayload(payload) ? payload : "",
+    });
+
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+  }, []);
 
   // Play audio chunk - Gemini Live API returns raw PCM 24kHz 16-bit little-endian
   const playAudioChunk = React.useCallback(async (audioB64: string, mimeType?: string) => {
@@ -375,11 +448,13 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       endOfTurnSentRef.current = false;
       voiceStartedRef.current = false;
       setWaitingForResponse(false);
-      // Auto-restart mic for continuous conversation after playback ends
-      if (mountedRef.current && !micStartedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+      // Auto-restart mic for continuous conversation after playback ends (only if session active)
+      if (!sessionEndedRef.current && mountedRef.current && !micStartedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
         endOfTurnSentRef.current = false;
         startMicPipeline();
       }
+      // Try completion when queue drains
+      maybeComplete();
       return;
     }
 
@@ -390,7 +465,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       isPlayingRef.current = false;
       processPlayQueue();
     }
-  }, [playAudioChunk, startMicPipeline]);
+  }, [playAudioChunk, startMicPipeline, maybeComplete]);
 
   // Handle WebSocket messages
   const handleMessage = React.useCallback((event: MessageEvent) => {
@@ -405,20 +480,16 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       } else if (msg.type === "assistant_audio" && msg.audio) {
         // Queue audio for playback
         playQueueRef.current.push({ audio: msg.audio, mime: msg.mime_type || "audio/pcm;rate=24000" });
+        lastAssistantAudioAtRef.current = performance.now();
         processPlayQueue();
       } else if (msg.type === "style_payload" && msg.payload) {
-        console.log("[LiveAssistant] Received style_payload, calling onComplete");
-        completionSentRef.current = true;
-        onCompleteRef.current({ stylePayload: msg.payload.trim() });
-        // Close WebSocket cleanly after receiving payload
-        wsRef.current?.close();
+        console.log("[LiveAssistant] Received style_payload");
+        pendingStylePayloadRef.current = msg.payload.trim();
+        payloadReceivedRef.current = true;
+        maybeComplete();
       } else if (msg.type === "session_end") {
-        // Session complete - close WebSocket
-        if (!completionSentRef.current) {
-          completionSentRef.current = true;
-          onCompleteRef.current({ stylePayload: "" });
-        }
-        wsRef.current?.close();
+        sessionEndedRef.current = true;
+        maybeComplete();
       } else if (msg.type === "error") {
         setError(msg.message || "Live assistant error");
         setStatus("error");
@@ -426,13 +497,14 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     } catch {
       // Ignore non-JSON
     }
-  }, [startMicPipeline, processPlayQueue]);
+  }, [startMicPipeline, processPlayQueue, maybeComplete]);
 
   // Track if we're currently connecting to prevent race conditions
   const connectingRef = React.useRef(false);
 
   // Connect WebSocket
   const connect = React.useCallback(() => {
+    if (completedRef.current) return;
     if (wsRef.current) return;
     if (connectingRef.current) return;
     connectingRef.current = true;
@@ -468,16 +540,17 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       voiceStartedRef.current = false;
       // Reset waiting state when connection closes unexpectedly
       setWaitingForResponse(false);
+      // If we already have the payload and the session ended, try to complete
+      maybeComplete();
+      if (completionSentRef.current || sessionEndedRef.current || completedRef.current) return;
       if (mountedRef.current) {
-        // If we were waiting for a response and connection closed, show error
         setStatus((prev) => {
           if (prev === "error") return "error";
-          // If connection closed normally after receiving payload, that's ok
           return "idle";
         });
       }
     };
-  }, [handleMessage, stopMicPipeline]);
+  }, [handleMessage, stopMicPipeline, maybeComplete]);
 
   // Cleanup everything
   const cleanup = React.useCallback(() => {
@@ -495,6 +568,14 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     nextPlayTimeRef.current = 0;
     pendingPcmByteRef.current = null;
     completionSentRef.current = false;
+    pendingStylePayloadRef.current = null;
+    sessionEndedRef.current = false;
+    payloadReceivedRef.current = false;
+    lastAssistantAudioAtRef.current = null;
+    if (completeDelayTimerRef.current) {
+      window.clearTimeout(completeDelayTimerRef.current);
+      completeDelayTimerRef.current = null;
+    }
   }, [stopMicPipeline]);
 
   // Restart session - go back to selection page
@@ -511,13 +592,16 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   // Connect on mount with auto-retry
   React.useEffect(() => {
     mountedRef.current = true;
-    
-    // Try to connect initially
     connect();
-    
-    // Set up a retry if initial connection fails after 2 seconds
+
     const retryTimer = setTimeout(() => {
-      if (mountedRef.current && !wsRef.current && statusRef.current !== "recording" && statusRef.current !== "ready") {
+      if (
+        mountedRef.current &&
+        !completedRef.current &&
+        !wsRef.current &&
+        statusRef.current !== "recording" &&
+        statusRef.current !== "ready"
+      ) {
         connect();
       }
     }, 2000);
@@ -527,7 +611,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       clearTimeout(retryTimer);
       cleanup();
     };
-  }, []); // Empty deps - only run once on mount
+  }, [cleanup, connect]);
 
   return (
     <div className="space-y-8">
