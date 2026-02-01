@@ -18,8 +18,6 @@ RUN pip install -r requirements.txt \
 # Copy backend code only
 COPY api ./api
 COPY util ./util
-COPY templates ./templates
-
 EXPOSE 5001
 
 # Use gunicorn with gevent-websocket worker for Flask-Sock
