@@ -176,11 +176,11 @@ Return ONLY valid JSON with these fields:
 - description (string): A human answer to the user's request. Please answer in a lively tone, like a real stylist. Answer in one sentence.
 - outfit (ARRAY): 1-4 items, each with: item_name, sku, color, link, reason, image.
 - accessories (ARRAY): Optional accessories, each with: item_name, sku, color, link, image.
-- other_recommendation (string): a "Pro Tip" regarding shoes, hair, or tucking techniques. Answer in one sentence
+- other_recommendation (string): a "Pro Tip" regarding shoes, hair, or tucking techniques. Answer in one sentence.
 
 **IMPORTANT**:
 - For **New/Update** requests: `outfit` MUST be an array with 1-4 items. Example: \"outfit\": [{...}, {...}]
-- For **Simple Questions**: Provide the answer in `description`, `outfit`, `accessories` and `other_recommendation` arrays should be empty.
+- For **Simple Questions**: Provide the answer in `description`. `outfit`, `accessories` and `other_recommendation` arrays should be empty.
 - Do NOT output any text outside the JSON.
 """
 
