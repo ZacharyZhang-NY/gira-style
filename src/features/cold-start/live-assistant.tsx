@@ -141,6 +141,15 @@ function pcmFloatTo16BitPCM(input: Float32Array) {
 }
 
 function buildWebSocketUrl(path: string) {
+  const envBase = (process.env.NEXT_PUBLIC_WS_BASE || "").trim();
+  if (envBase) {
+    const withoutSlash = envBase.replace(/\/+$/, "");
+    const wsBase = withoutSlash.startsWith("http")
+      ? withoutSlash.replace(/^http/, "ws")
+      : withoutSlash;
+    return `${wsBase}${path}`;
+  }
+
   if (typeof window === "undefined") return path;
   const { hostname, protocol, port } = window.location;
   const isLocalHost =

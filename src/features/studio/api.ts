@@ -152,9 +152,17 @@ function stripTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
 
+function normalizeBaseUrl(value: string) {
+  // Fix common typo like http:/host -> http://host
+  if (/^https?:\/[^/]/.test(value)) {
+    return value.replace(/^https?:\//, (m) => `${m}/`);
+  }
+  return value;
+}
+
 function getBackendBaseUrl() {
   const configured = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (configured) return stripTrailingSlash(configured);
+  if (configured) return stripTrailingSlash(normalizeBaseUrl(configured));
 
   if (typeof window === "undefined") return "";
 
