@@ -51,6 +51,7 @@ logs/
 # Temp files
 /tmp/
 *.tmp
+templates/
 
 # Old/Unused
 legacy/

@@ -27,7 +27,6 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-TEMPLATE_DIR = os.path.join(ROOT_DIR, "templates")
 TEMPLATE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 
 # Load environment variables from .env.local for local dev
@@ -85,6 +84,7 @@ R2_ENDPOINT = os.getenv("R2_ENDPOINT", "")
 R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "")
+R2_TEMPLATE_PREFIX = os.getenv("R2_TEMPLATE_PREFIX", "templates/")
 
 _r2_client = None
 _chat_cache = {}
@@ -246,31 +246,38 @@ def fetch_video_bytes(video_uri: str):
 
 
 def load_random_template_image():
-    if not os.path.isdir(TEMPLATE_DIR):
-        logger.warning("Template directory not found: %s", TEMPLATE_DIR)
-        return None
-    candidates = [
-        entry for entry in os.scandir(TEMPLATE_DIR)
-        if entry.is_file() and entry.name.lower().endswith(TEMPLATE_EXTENSIONS)
-    ]
-    if not candidates:
-        logger.warning("No template images found in %s", TEMPLATE_DIR)
-        return None
-    chosen = random.choice(candidates)
+    prefix = R2_TEMPLATE_PREFIX.rstrip("/") + "/"
     try:
-        with open(chosen.path, "rb") as handle:
-            image_bytes = handle.read()
-        mime_type = mimetypes.guess_type(chosen.path)[0] or "image/png"
+        client = get_r2_client()
+    except Exception as e:  # pragma: no cover - env guard
+        logger.warning("R2 client not available: %s", e)
+        return None
+
+    try:
+        resp = client.list_objects_v2(Bucket=R2_BUCKET, Prefix=prefix)
+        contents = resp.get("Contents", []) if resp else []
+        candidates = [
+            obj for obj in contents
+            if obj.get("Key", "").lower().endswith(TEMPLATE_EXTENSIONS)
+        ]
+        if not candidates:
+            logger.warning("No template images found in R2 prefix %s", prefix)
+            return None
+        chosen = random.choice(candidates)
+        key = chosen.get("Key")
+        obj = client.get_object(Bucket=R2_BUCKET, Key=key)
+        image_bytes = obj["Body"].read()
+        mime_type = mimetypes.guess_type(key)[0] or "image/png"
         if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
             logger.warning(
                 "Template image has unsupported mime type: %s (%s)",
                 mime_type,
-                chosen.name,
+                os.path.basename(key),
             )
             return None
-        return image_bytes, mime_type, chosen.name
+        return image_bytes, mime_type, os.path.basename(key)
     except Exception as e:
-        logger.warning("Failed to load template image %s: %s", chosen.name, e)
+        logger.warning("Failed to load template image from R2: %s", e)
         return None
 
 
