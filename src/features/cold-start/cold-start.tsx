@@ -131,9 +131,6 @@ export function ColdStart() {
   const [startMode, setStartMode] = React.useState<
     "choose" | "guide" | "live"
   >("choose");
-  const [liveAutoEnable, setLiveAutoEnable] = React.useState(false);
-  const [liveStream, setLiveStream] = React.useState<MediaStream | null>(null);
-  const [liveInputContext, setLiveInputContext] = React.useState<AudioContext | null>(null);
   const [stepIndex, setStepIndex] = React.useState(0);
   const [styleText, setStyleText] = React.useState("");
   const [error, setError] = React.useState("");
@@ -207,30 +204,6 @@ export function ColdStart() {
         : [...currentValues, nextValue];
       return { ...prev, [question.id]: nextValues };
     });
-  }
-
-  async function requestLiveMicPermission() {
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setLiveAutoEnable(false);
-      return { ok: false as const, stream: null, context: null };
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      let context: AudioContext | null = null;
-      try {
-        context = new AudioContext();
-        if (context.state === "suspended") {
-          await context.resume();
-        }
-      } catch {
-        context = null;
-      }
-      setLiveAutoEnable(true);
-      return { ok: true as const, stream, context };
-    } catch {
-      setLiveAutoEnable(false);
-      return { ok: false as const, stream: null, context: null };
-    }
   }
 
   function goBack() {
@@ -391,24 +364,7 @@ export function ColdStart() {
                       <div className="grid gap-4 sm:grid-cols-2">
                         <button
                           type="button"
-                          onClick={async () => {
-                            if (liveStream) {
-                              liveStream.getTracks().forEach((track) => track.stop());
-                              setLiveStream(null);
-                            }
-                            if (liveInputContext) {
-                              liveInputContext.close().catch(() => undefined);
-                              setLiveInputContext(null);
-                            }
-                            const result = await requestLiveMicPermission();
-                            if (result.stream) {
-                              setLiveStream(result.stream);
-                            }
-                            if (result.context) {
-                              setLiveInputContext(result.context);
-                            }
-                            setStartMode("live");
-                          }}
+                          onClick={() => setStartMode("live")}
                           className={cn(
                             "group flex h-full w-full flex-col items-start justify-between gap-6 rounded-2xl p-6 text-left",
                             "ui-glass-subtle",
@@ -444,9 +400,6 @@ export function ColdStart() {
                   ) : startMode === "live" && stepIndex < zipStepIndex ? (
                     <LiveAssistant
                       onComplete={handleLiveComplete}
-                      autoEnableMic={liveAutoEnable}
-                      initialStream={liveStream}
-                      initialInputContext={liveInputContext}
                       onBack={() => setStartMode("choose")}
                     />
                   ) : (
