@@ -76,11 +76,16 @@ function getPrimaryShopItems(payload: RecommendationPayload, max = 4) {
     : [];
   return [...outfit, ...accessories].slice(0, max);
 }
+
 function getOutfitItems(payload: RecommendationPayload) {
-  if (Array.isArray(payload.outfit) && payload.outfit.length)
-    return payload.outfit;
-  if (Array.isArray(payload.accessories)) return payload.accessories;
-  return [];
+  const items: any[] = [];
+  if (Array.isArray(payload.outfit) && payload.outfit.length) {
+    items.push(...payload.outfit);
+  }
+  if (Array.isArray(payload.accessories)) {
+    items.push(...payload.accessories);
+  }
+  return items
 }
 
 function mergeCommunityLooks(
