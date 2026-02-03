@@ -69,6 +69,12 @@ type CommunityLooksResponse = {
   error?: string;
 };
 
+type SessionTurnResponse = {
+  success?: boolean;
+  assistantResponse?: RecommendationPayload;
+  error?: string;
+};
+
 type ChipsResponse = {
   chips?: string[];
   error?: string;
@@ -482,6 +488,21 @@ export async function fetchCommunityLooks(options: CommunityLooksOptions = {}) {
     throw new Error(payload?.error || "Community looks unavailable.");
   }
   return payload.looks;
+}
+
+export async function fetchSessionTurnRecommendation(
+  sessionId: string,
+  turnIndex: number,
+  options: RequestOptions = {},
+): Promise<RecommendationPayload> {
+  const payload = await requestGet<SessionTurnResponse>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/turns/${turnIndex}`,
+    options,
+  );
+  if (!payload?.success || !payload.assistantResponse) {
+    throw new Error(payload?.error || "SKU unavailable.");
+  }
+  return payload.assistantResponse;
 }
 
 export async function updateCommunityFeedback(

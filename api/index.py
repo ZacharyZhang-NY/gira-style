@@ -1492,6 +1492,40 @@ def update_session_feedback(session_id, turn_index):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/sessions/<session_id>/turns/<int:turn_index>', methods=['GET'])
+def get_session_turn(session_id, turn_index):
+    if not DATABASE_URL:
+        return jsonify({'error': 'Database not configured.'}), 500
+    normalized_session_id = normalize_session_id(session_id)
+    if not normalized_session_id:
+        return jsonify({'error': 'Invalid session id.'}), 400
+    if turn_index < 1:
+        return jsonify({'error': 'turn_index must be >= 1.'}), 400
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT assistant_response
+                    FROM session_turns
+                    WHERE session_id = %s AND turn_index = %s
+                    """,
+                    (normalized_session_id, turn_index),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return jsonify({'error': 'Session turn not found.'}), 404
+                assistant_response = row[0]
+
+        if not isinstance(assistant_response, dict):
+            return jsonify({'error': 'Invalid assistant response.'}), 500
+
+        return jsonify({'success': True, 'assistantResponse': assistant_response})
+    except Exception as e:
+        logger.exception("Session turn fetch error")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/sessions/<session_id>/chips', methods=['POST'])
 def generate_session_chips(session_id):
     if not DATABASE_URL:

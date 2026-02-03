@@ -16,6 +16,9 @@ type OutfitPreviewProps = {
   upCount?: number;
   downCount?: number;
   onFeedback: (value: "up" | "down") => void;
+  badgeLabel?: string;
+  onBadgeClick?: () => void;
+  hideBadge?: boolean;
 };
 
 export function OutfitPreview({
@@ -25,6 +28,9 @@ export function OutfitPreview({
   upCount,
   downCount,
   onFeedback,
+  badgeLabel = "Outfit preview",
+  onBadgeClick,
+  hideBadge,
 }: OutfitPreviewProps) {
   const shouldReduceMotion = useReducedMotion();
   const [imageReady, setImageReady] = React.useState(false);
@@ -83,11 +89,27 @@ export function OutfitPreview({
         />
       ) : null}
 
-      <div className="absolute left-4 top-4 flex items-center gap-3">
-        <div className="rounded-full bg-glass-highlight/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-text">
-          Outfit preview
+      {!hideBadge ? (
+        <div className="absolute left-4 top-4 flex items-center gap-3">
+          {onBadgeClick ? (
+            <button
+              type="button"
+              onClick={onBadgeClick}
+              className={cn(
+                "rounded-full bg-glass-highlight/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-text",
+                "transition-[transform,box-shadow] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                "hover:shadow-lux-md motion-safe:hover:-translate-y-0.5",
+              )}
+            >
+              {badgeLabel}
+            </button>
+          ) : (
+            <div className="rounded-full bg-glass-highlight/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-text">
+              {badgeLabel}
+            </div>
+          )}
         </div>
-      </div>
+      ) : null}
 
       {hasImage ? (
         <div className="absolute bottom-4 right-4 flex items-center gap-2">

@@ -1,9 +1,14 @@
 "use client";
 
+import * as React from "react";
+
+import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface";
 import { cn } from "@/lib/cn";
 
 import type { CommunityLook } from "../types";
+import type { RecommendationItem } from "../types";
+import { fetchSessionTurnRecommendation } from "../api";
 import { OutfitPreview } from "./outfit-preview";
 
 type CommunityLooksProps = {
@@ -17,6 +22,70 @@ export function CommunityLooks({
   onFeedback,
   className,
 }: CommunityLooksProps) {
+  const [skuModalOpen, setSkuModalOpen] = React.useState(false);
+  const [skuLoading, setSkuLoading] = React.useState(false);
+  const [skuError, setSkuError] = React.useState("");
+  const [skuItems, setSkuItems] = React.useState<RecommendationItem[]>([]);
+  const abortRef = React.useRef<AbortController | null>(null);
+
+  const closeSkuModal = React.useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setSkuModalOpen(false);
+    setSkuLoading(false);
+    setSkuError("");
+    setSkuItems([]);
+  }, []);
+
+  React.useEffect(() => {
+    if (!skuModalOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        closeSkuModal();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [closeSkuModal, skuModalOpen]);
+
+  const openSkuModal = React.useCallback(
+    (look: CommunityLook) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setSkuModalOpen(true);
+      setSkuLoading(true);
+      setSkuError("");
+      setSkuItems([]);
+
+      fetchSessionTurnRecommendation(look.sessionId, look.turnIndex, {
+        signal: controller.signal,
+      })
+        .then((recommendation) => {
+          const outfit = Array.isArray(recommendation.outfit)
+            ? recommendation.outfit
+            : [];
+          const accessories = Array.isArray(recommendation.accessories)
+            ? recommendation.accessories
+            : [];
+          const items = [...outfit, ...accessories].filter(
+            (item) => typeof item.sku === "string" && item.sku.trim().length > 0,
+          );
+          setSkuItems(items);
+        })
+        .catch((err) => {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          setSkuError(
+            err instanceof Error && err.message ? err.message : "SKU unavailable.",
+          );
+        })
+        .finally(() => {
+          setSkuLoading(false);
+        });
+    },
+    [],
+  );
+
   if (!looks.length) return null;
 
   return (
@@ -46,10 +115,68 @@ export function CommunityLooks({
               upCount={look.upVotes}
               downCount={look.downVotes}
               onFeedback={(value) => onFeedback(look, value)}
+              badgeLabel="SKU"
+              onBadgeClick={() => openSkuModal(look)}
             />
           </Surface>
         ))}
       </div>
+
+      {skuModalOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-center px-6">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={closeSkuModal}
+            className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+          />
+          <Surface
+            role="dialog"
+            aria-modal="true"
+            className={cn(
+              "relative w-full max-w-md p-6",
+              "max-h-[min(520px,calc(100vh-96px))] overflow-auto",
+            )}
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
+                SKUs
+              </div>
+              <Button tone="ghost" onClick={closeSkuModal} className="h-9 px-3 text-xs">
+                Close
+              </Button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {skuLoading ? (
+                <div className="space-y-2">
+                  <div className="h-3 w-10/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+                  <div className="h-3 w-8/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+                  <div className="h-3 w-9/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+                </div>
+              ) : skuError ? (
+                <p className="text-sm leading-relaxed text-muted">{skuError}</p>
+              ) : skuItems.length ? (
+                <ul className="space-y-2 text-sm text-text">
+                  {skuItems.map((item, idx) => (
+                    <li
+                      key={`${item.sku}-${idx}`}
+                      className="flex items-baseline justify-between gap-3 rounded-xl bg-glass-highlight/10 px-3 py-2"
+                    >
+                      <span className="min-w-0 truncate">{item.item_name || "Item"}</span>
+                      <span className="shrink-0 font-mono text-xs text-muted">
+                        {item.sku}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm leading-relaxed text-muted">No SKU available.</p>
+              )}
+            </div>
+          </Surface>
+        </div>
+      ) : null}
     </section>
   );
 }
