@@ -277,73 +277,104 @@ function VersionOutput({
   const shopItems = version.recommendation
     ? getPrimaryShopItems(version.recommendation, 4)
     : [];
+  const skuItems = shopItems.filter(
+    (item) => typeof item.sku === "string" && item.sku.trim().length > 0,
+  );
+  const otherRecommendation =
+    typeof version.recommendation?.other_recommendation === "string"
+      ? version.recommendation.other_recommendation.trim()
+      : "";
+  const showRecommendationCard =
+    version.stages.a === "loading" ||
+    version.stages.a === "error" ||
+    !version.recommendation ||
+    skuItems.length > 0 ||
+    Boolean(otherRecommendation);
   const previewWidth = "w-full lg:max-w-[320px]";
   const videoPreviewEnabled = version.videoPreviewEnabled ?? true;
+  const hasGeneratedImage =
+    typeof version.generatedImage === "string" &&
+    version.generatedImage.trim().length > 0;
+  const hasGeneratedVideo =
+    typeof version.generatedVideo === "string" &&
+    version.generatedVideo.trim().length > 0;
+  const showOutfitPreview = version.stages.b === "loading" || hasGeneratedImage;
+  const showMotionPreview =
+    videoPreviewEnabled &&
+    (version.stages.c === "loading" ||
+      hasGeneratedVideo ||
+      (version.stages.c === "done" && hasGeneratedImage));
+  const showPreviewGrid = showOutfitPreview || showMotionPreview;
+  const splitPreview = showOutfitPreview && showMotionPreview;
 
   return (
     <div className="space-y-8">
-      <Surface className="p-8 sm:p-10">
-        {version.stages.a === "loading" ? (
-          <div className="space-y-4">
-            <div className="h-3 w-11/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-            <div className="h-3 w-10/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-            <div className="h-3 w-9/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
-            <div className="grid grid-cols-2 gap-6 pt-4">
-              <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
-              <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
-            </div>
-          </div>
-        ) : version.recommendation ? (
-          <div className="space-y-10">
-            {shopItems.length ? <ProductGrid items={shopItems} /> : null}
-
-            {version.recommendation.other_recommendation ? (
-              <div className="flex items-start gap-2 text-sm leading-relaxed text-muted">
-                <Star
-                  className="mt-0.5 h-4 w-4 shrink-0 text-gold"
-                  aria-hidden="true"
-                />
-                <p className="min-w-0">
-                  {version.recommendation.other_recommendation}
-                </p>
+      {showRecommendationCard ? (
+        <Surface className="p-8 sm:p-10">
+          {version.stages.a === "loading" ? (
+            <div className="space-y-4">
+              <div className="h-3 w-11/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+              <div className="h-3 w-10/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+              <div className="h-3 w-9/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
+              <div className="grid grid-cols-2 gap-6 pt-4">
+                <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
+                <div className="h-44 rounded-2xl ui-glass-subtle motion-safe:animate-pulse" />
               </div>
+            </div>
+          ) : version.recommendation ? (
+            <div className="space-y-10">
+              {skuItems.length ? <ProductGrid items={skuItems} /> : null}
+
+              {otherRecommendation ? (
+                <div className="flex items-start gap-2 text-sm leading-relaxed text-muted">
+                  <Star
+                    className="mt-0.5 h-4 w-4 shrink-0 text-gold"
+                    aria-hidden="true"
+                  />
+                  <p className="min-w-0">{otherRecommendation}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm leading-relaxed text-muted">
+              {version.stageErrors?.a || "No recommendation available yet."}
+            </p>
+          )}
+        </Surface>
+      ) : null}
+
+      {showPreviewGrid ? (
+        <div className="mx-auto w-full max-w-6xl">
+          <div
+            className={cn(
+              "grid gap-6 lg:justify-items-center",
+              splitPreview ? "lg:grid-cols-2" : "lg:grid-cols-1",
+            )}
+          >
+            {showOutfitPreview ? (
+              <Surface className={cn("overflow-hidden p-0", previewWidth)}>
+                <OutfitPreview
+                  state={version.stages.b ?? "pending"}
+                  image={version.generatedImage}
+                  feedback={version.feedback}
+                  onFeedback={(value) => onFeedback(version.id, value)}
+                />
+              </Surface>
+            ) : null}
+
+            {showMotionPreview ? (
+              <Surface className={cn("overflow-hidden p-0", previewWidth)}>
+                <MotionPreview
+                  state={version.stages.c ?? "pending"}
+                  image={version.generatedImage}
+                  video={version.generatedVideo}
+                  videoEnabled={videoPreviewEnabled}
+                />
+              </Surface>
             ) : null}
           </div>
-        ) : (
-          <p className="text-sm leading-relaxed text-muted">
-            {version.stageErrors?.a || "No recommendation available yet."}
-          </p>
-        )}
-      </Surface>
-
-      <div className="mx-auto w-full max-w-6xl">
-        <div
-          className={cn(
-            "grid gap-6 lg:justify-items-center",
-            videoPreviewEnabled ? "lg:grid-cols-2" : "lg:grid-cols-1",
-          )}
-        >
-          <Surface className={cn("overflow-hidden p-0", previewWidth)}>
-            <OutfitPreview
-              state={version.stages.b ?? "pending"}
-              image={version.generatedImage}
-              feedback={version.feedback}
-              onFeedback={(value) => onFeedback(version.id, value)}
-            />
-          </Surface>
-
-          {videoPreviewEnabled ? (
-            <Surface className={cn("overflow-hidden p-0", previewWidth)}>
-              <MotionPreview
-                state={version.stages.c ?? "pending"}
-                image={version.generatedImage}
-                video={version.generatedVideo}
-                videoEnabled={videoPreviewEnabled}
-              />
-            </Surface>
-          ) : null}
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -636,13 +667,29 @@ export function Studio() {
 
         if (isStale()) return;
 
+        const outfitItems = getOutfitItems(recommendation);
+        const shouldGenerateImage = outfitItems.some((item) => {
+          const hasName =
+            typeof item.item_name === "string" && item.item_name.trim().length > 0;
+          const hasImage =
+            (typeof item.image === "string" && item.image.length > 0) ||
+            (typeof item.image_url === "string" && item.image_url.length > 0) ||
+            (typeof item.imageUrl === "string" && item.imageUrl.length > 0);
+          return hasName && hasImage;
+        });
+
         setState((prev) => ({
           ...prev,
           versions: prev.versions.map((v) =>
             v.id === id
               ? {
                   ...v,
-                  stages: { ...v.stages, a: "done", b: "loading" },
+                  stages: {
+                    ...v.stages,
+                    a: "done",
+                    b: shouldGenerateImage ? "loading" : "done",
+                    c: shouldGenerateImage ? v.stages.c : "done",
+                  },
                   recommendation,
                 }
               : v,
@@ -671,13 +718,31 @@ export function Studio() {
             });
         }
 
+        if (!shouldGenerateImage) return;
+
         stage = "b";
-        const outfitItems = getOutfitItems(recommendation);
         const imageData = await generateImage(outfitItems, {
           signal: controller.signal,
         });
 
         if (isStale()) return;
+
+        if (!imageData) {
+          setState((prev) => ({
+            ...prev,
+            versions: prev.versions.map((v) =>
+              v.id === id
+                ? {
+                    ...v,
+                    stages: { ...v.stages, b: "done", c: "done" },
+                    generatedImage: undefined,
+                    generatedVideo: undefined,
+                  }
+                : v,
+            ),
+          }));
+          return;
+        }
 
         const shouldGenerateVideo = videoEnabledRef.current;
 
@@ -891,13 +956,6 @@ export function Studio() {
         text: string;
         highlight?: boolean;
       }> = [];
-
-      assistantMessages.push({
-        id: `${v.id}-assistant-loading`,
-        role: "assistant",
-        heading: "",
-        text: "Give me a moment—I’m pulling pieces that match your vibe.",
-      });
 
       if (v.stages.a === "done") {
         assistantMessages.push({

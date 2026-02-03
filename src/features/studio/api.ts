@@ -349,9 +349,12 @@ export async function fetchRecommendation(
   }
 }
 
-export async function generateImage(outfitItems: RecommendationItem[], options: RequestOptions = {}) {
+export async function generateImage(
+  outfitItems: RecommendationItem[],
+  options: RequestOptions = {},
+): Promise<string | null> {
   if (!outfitItems.length) {
-    throw new Error("No outfit items available for image generation.");
+    return null;
   }
 
   const normalizedItems = outfitItems
@@ -363,7 +366,7 @@ export async function generateImage(outfitItems: RecommendationItem[], options: 
     .slice(0, 4);
 
   if (!normalizedItems.length) {
-    throw new Error("No product images were returned for this recommendation.");
+    return null;
   }
 
   const itemsWithBase64 = await Promise.all(
@@ -376,7 +379,7 @@ export async function generateImage(outfitItems: RecommendationItem[], options: 
 
   const successfulItems = itemsWithBase64.filter((item) => item.image_base64);
   if (!successfulItems.length) {
-    throw new Error("Could not fetch any product images from the browser.");
+    return null;
   }
 
   const payload = await requestJson<{ success?: boolean; image_data?: string; error?: string }>(
@@ -387,8 +390,12 @@ export async function generateImage(outfitItems: RecommendationItem[], options: 
     options,
   );
 
-  if (!payload?.success || !payload.image_data) {
+  if (!payload?.success) {
     throw new Error(payload?.error || "Image generation failed.");
+  }
+
+  if (typeof payload.image_data !== "string" || !payload.image_data) {
+    return null;
   }
 
   return payload.image_data;
