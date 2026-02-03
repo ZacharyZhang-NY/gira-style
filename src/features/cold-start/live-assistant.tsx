@@ -200,6 +200,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const payloadReceivedRef = React.useRef(false);
   const lastAssistantAudioAtRef = React.useRef<number | null>(null);
   const completeDelayTimerRef = React.useRef<number | null>(null);
+  const hardCutAtRef = React.useRef<number | null>(null);
 
   const micStartedRef = React.useRef(false);
   const voiceStartedRef = React.useRef(false);
@@ -354,13 +355,11 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     if (completionSentRef.current) return;
     if (!payloadReceivedRef.current) return;
 
-    const queueEmpty = playQueueRef.current.length === 0 && !isPlayingRef.current;
-    if (!queueEmpty) return;
-
     const now = performance.now();
-    const lastAudio = lastAssistantAudioAtRef.current ?? now;
-    const elapsed = now - lastAudio;
-    const remaining = 10000 - elapsed; // 10s grace after last assistant audio
+    if (hardCutAtRef.current == null) {
+      hardCutAtRef.current = now + 8000;
+    }
+    const remaining = hardCutAtRef.current - now;
 
     // If we never saw explicit session_end but audio/payload are done and grace elapsed, force end
     if (!sessionEndedRef.current && remaining <= 0) {
@@ -456,11 +455,13 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       // Queue empty - reset end of turn flag so we can send again
       endOfTurnSentRef.current = false;
       voiceStartedRef.current = false;
-      setWaitingForResponse(false);
-      // Auto-restart mic for continuous conversation after playback ends (only if session active)
-      if (!sessionEndedRef.current && mountedRef.current && !micStartedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
-        endOfTurnSentRef.current = false;
-        startMicPipeline();
+      if (!payloadReceivedRef.current) {
+        setWaitingForResponse(false);
+        // Auto-restart mic for continuous conversation after playback ends (only if session active)
+        if (!sessionEndedRef.current && mountedRef.current && !micStartedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+          endOfTurnSentRef.current = false;
+          startMicPipeline();
+        }
       }
       // Try completion when queue drains
       maybeComplete();
@@ -489,12 +490,20 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       } else if (msg.type === "assistant_audio" && msg.audio) {
         // Queue audio for playback
         playQueueRef.current.push({ audio: msg.audio, mime: msg.mime_type || "audio/pcm;rate=24000" });
-        lastAssistantAudioAtRef.current = performance.now();
+        if (!payloadReceivedRef.current) {
+          lastAssistantAudioAtRef.current = performance.now();
+        }
         processPlayQueue();
       } else if (msg.type === "style_payload" && msg.payload) {
         console.log("[LiveAssistant] Received style_payload");
         pendingStylePayloadRef.current = msg.payload.trim();
         payloadReceivedRef.current = true;
+        if (hardCutAtRef.current == null) {
+          hardCutAtRef.current = performance.now() + 8000;
+        }
+        // Stop capturing input and prevent "Done speaking" from being clickable once we enter finalization.
+        stopMicPipeline();
+        setWaitingForResponse(true);
         maybeComplete();
       } else if (msg.type === "session_end") {
         sessionEndedRef.current = true;
@@ -506,7 +515,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     } catch {
       // Ignore non-JSON
     }
-  }, [startMicPipeline, processPlayQueue, maybeComplete]);
+  }, [startMicPipeline, stopMicPipeline, processPlayQueue, maybeComplete]);
 
   // Track if we're currently connecting to prevent race conditions
   const connectingRef = React.useRef(false);
@@ -548,7 +557,9 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       endOfTurnSentRef.current = false;
       voiceStartedRef.current = false;
       // Reset waiting state when connection closes unexpectedly
-      setWaitingForResponse(false);
+      if (!payloadReceivedRef.current) {
+        setWaitingForResponse(false);
+      }
       // If we already have the payload and the session ended, try to complete
       maybeComplete();
       if (completionSentRef.current || sessionEndedRef.current || completedRef.current) return;
@@ -581,6 +592,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     sessionEndedRef.current = false;
     payloadReceivedRef.current = false;
     lastAssistantAudioAtRef.current = null;
+    hardCutAtRef.current = null;
     if (completeDelayTimerRef.current) {
       window.clearTimeout(completeDelayTimerRef.current);
       completeDelayTimerRef.current = null;
@@ -607,6 +619,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       if (
         mountedRef.current &&
         !completedRef.current &&
+        !payloadReceivedRef.current &&
         !wsRef.current &&
         statusRef.current !== "recording" &&
         statusRef.current !== "ready"

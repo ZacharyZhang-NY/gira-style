@@ -1042,7 +1042,9 @@ async def _handle_live_session(ws, client: genai.Client):
                 ]
                 if any(phrase in recent_tail for phrase in exit_phrases):
                     logger.info(f"[LiveSession] Detected natural exit phrase")
-                    return await _schedule_force("natural_exit_detected", 12.0)
+                    # Send the payload quickly; client is responsible for delaying navigation
+                    # long enough to let the goodbye audio finish playing.
+                    return await _schedule_force("natural_exit_detected", 0.5)
                 return False
 
             async def _force_timeout():
