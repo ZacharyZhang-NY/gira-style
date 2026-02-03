@@ -115,8 +115,7 @@ export function CommunityLooks({
               upCount={look.upVotes}
               downCount={look.downVotes}
               onFeedback={(value) => onFeedback(look, value)}
-              badgeLabel="SKU"
-              onBadgeClick={() => openSkuModal(look)}
+              onPreviewClick={() => openSkuModal(look)}
             />
           </Surface>
         ))}
