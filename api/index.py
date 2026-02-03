@@ -875,7 +875,7 @@ async def _handle_live_session(ws, client: genai.Client):
             await _send_json(ws, {"type": "ready", "model": model_id})
             if not initial_user_message:
                 # Start the conversation with explicit instruction to follow the output format
-                await _send_live_input(session, "Begin. Remember: when you have gathered enough information, you MUST say 'This has been so helpful! I have a really good sense of your style now. I'm going to get to work on your personalized catalog. I'll talk to you soon!' and then IMMEDIATELY output the style payload between ---BEGIN_STYLE_PAYLOAD--- and ---END_STYLE_PAYLOAD--- markers.", end_of_turn=True)
+                await _send_live_input(session, "Begin. When you have gathered enough information, you MUST say exactly: 'This has been so helpful! I have a really good sense of your style now. I'm going to get to work on your personalized catalog.' Do not add any other farewell. IMMEDIATELY after that sentence, output the style payload between ---BEGIN_STYLE_PAYLOAD--- and ---END_STYLE_PAYLOAD--- markers.", end_of_turn=True)
 
             payload_parts = []
             payload_complete = False
@@ -1042,7 +1042,7 @@ async def _handle_live_session(ws, client: genai.Client):
                 ]
                 if any(phrase in recent_tail for phrase in exit_phrases):
                     logger.info(f"[LiveSession] Detected natural exit phrase")
-                    return await _schedule_force("natural_exit_detected", 1.5)
+                    return await _schedule_force("natural_exit_detected", 12.0)
                 return False
 
             async def _force_timeout():
