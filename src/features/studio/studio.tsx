@@ -285,11 +285,12 @@ function VersionOutput({
     typeof version.recommendation?.other_recommendation === "string"
       ? version.recommendation.other_recommendation.trim()
       : "";
+  const showLoadingSkeleton = version.versionNumber === 1 && version.stages.a === "loading";
   const showRecommendationCard =
+    showLoadingSkeleton ||
     version.stages.a === "error" ||
-    !version.recommendation ||
-    skuItems.length > 0 ||
-    Boolean(otherRecommendation);
+    (!version.recommendation && version.stages.a !== "loading") ||
+    (Boolean(version.recommendation) && (skuItems.length > 0 || Boolean(otherRecommendation)));
   const previewWidth = "w-full lg:max-w-[320px]";
   const videoPreviewEnabled = version.videoPreviewEnabled ?? true;
   const hasGeneratedImage =
