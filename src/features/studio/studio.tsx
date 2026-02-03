@@ -286,7 +286,6 @@ function VersionOutput({
       ? version.recommendation.other_recommendation.trim()
       : "";
   const showRecommendationCard =
-    version.stages.a === "loading" ||
     version.stages.a === "error" ||
     !version.recommendation ||
     skuItems.length > 0 ||
