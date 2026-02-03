@@ -915,17 +915,17 @@ async def _handle_live_session(ws, client: genai.Client):
 
             async def _send_minimal_and_close(reason: str):
                 nonlocal payload_complete
-                if payload_complete:
-                    return True
-                payload_complete = True
-                minimal_payload = f"""{BEGIN_PAYLOAD}
+                # Always send a session_end so the client can close cleanly.
+                if not payload_complete:
+                    payload_complete = True
+                    minimal_payload = f"""{BEGIN_PAYLOAD}
 [USER INTENT]:
 [ESTABLISHED STYLE]:
 [STYLE ASPIRATIONS]:
 [FASHION PERSONALITY]:
 {END_PAYLOAD}"""
-                await _send_json(ws, {"type": "style_payload", "payload": minimal_payload})
-                await asyncio.sleep(0.05)
+                    await _send_json(ws, {"type": "style_payload", "payload": minimal_payload})
+                    await asyncio.sleep(0.05)
                 await _send_json(ws, {"type": "session_end", "reason": reason})
                 # Do NOT close server-side; let client close to avoid frame errors
                 return True
