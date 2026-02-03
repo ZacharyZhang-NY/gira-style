@@ -27,12 +27,18 @@ function ItemMeta({ color }: { color?: string }) {
   );
 }
 
-export function ProductGrid({ items }: { items: RecommendationItem[] }) {
+export function ProductGrid({
+  items,
+  className,
+}: {
+  items: RecommendationItem[];
+  className?: string;
+}) {
   const shouldReduceMotion = useReducedMotion();
   const hoverTransition = luxTween(shouldReduceMotion);
 
   return (
-    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+    <div className={cn("grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3", className)}>
       {items.map((item, idx) => {
         const imageUrl = getItemImage(item);
         const hasImage = isImageUrl(imageUrl);

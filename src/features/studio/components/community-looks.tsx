@@ -10,12 +10,22 @@ import type { CommunityLook } from "../types";
 import type { RecommendationItem } from "../types";
 import { fetchSessionTurnRecommendation } from "../api";
 import { OutfitPreview } from "./outfit-preview";
+import { ProductGrid } from "./product-grid";
 
 type CommunityLooksProps = {
   looks: CommunityLook[];
   onFeedback: (look: CommunityLook, value: "up" | "down") => void;
   className?: string;
 };
+
+function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  return value.startsWith("http://") || value.startsWith("https://");
+}
+
+function buildAritziaSearchUrl(sku: string) {
+  return `https://www.aritzia.com/us/en/search?q=${encodeURIComponent(sku)}`;
+}
 
 export function CommunityLooks({
   looks,
@@ -68,9 +78,17 @@ export function CommunityLooks({
           const accessories = Array.isArray(recommendation.accessories)
             ? recommendation.accessories
             : [];
-          const items = [...outfit, ...accessories].filter(
-            (item) => typeof item.sku === "string" && item.sku.trim().length > 0,
-          );
+          const items = [...outfit, ...accessories]
+            .map((item) => {
+              const sku = typeof item.sku === "string" ? item.sku.trim() : "";
+              const link = isHttpUrl(item.link)
+                ? item.link
+                : sku
+                  ? buildAritziaSearchUrl(sku)
+                  : undefined;
+              return { ...item, link };
+            })
+            .filter((item) => typeof item.sku === "string" && item.sku.trim().length > 0);
           setSkuItems(items);
         })
         .catch((err) => {
@@ -133,8 +151,8 @@ export function CommunityLooks({
             role="dialog"
             aria-modal="true"
             className={cn(
-              "relative w-full max-w-md p-6",
-              "max-h-[min(520px,calc(100vh-96px))] overflow-auto",
+              "relative w-full max-w-5xl p-6 sm:p-8",
+              "max-h-[min(640px,calc(100vh-96px))] overflow-auto",
             )}
           >
             <div className="flex items-center justify-between gap-4">
@@ -146,7 +164,7 @@ export function CommunityLooks({
               </Button>
             </div>
 
-            <div className="mt-4 space-y-3">
+            <div className="mt-6">
               {skuLoading ? (
                 <div className="space-y-2">
                   <div className="h-3 w-10/12 rounded-full bg-[linear-gradient(90deg,rgb(var(--glass-border)_/_0.18)_25%,rgb(var(--glass-border)_/_0.32)_37%,rgb(var(--glass-border)_/_0.18)_63%)] bg-[length:400%_100%] motion-safe:animate-shimmer" />
@@ -156,19 +174,7 @@ export function CommunityLooks({
               ) : skuError ? (
                 <p className="text-sm leading-relaxed text-muted">{skuError}</p>
               ) : skuItems.length ? (
-                <ul className="space-y-2 text-sm text-text">
-                  {skuItems.map((item, idx) => (
-                    <li
-                      key={`${item.sku}-${idx}`}
-                      className="flex items-baseline justify-between gap-3 rounded-xl bg-glass-highlight/10 px-3 py-2"
-                    >
-                      <span className="min-w-0 truncate">{item.item_name || "Item"}</span>
-                      <span className="shrink-0 font-mono text-xs text-muted">
-                        {item.sku}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <ProductGrid items={skuItems} className="lg:grid-cols-2" />
               ) : (
                 <p className="text-sm leading-relaxed text-muted">No SKU available.</p>
               )}
