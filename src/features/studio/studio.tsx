@@ -38,6 +38,7 @@ import { ProductGrid } from "./components/product-grid";
 import { ChatPanel } from "./components/chat-panel";
 import type {
   CommunityLook,
+  RecommendationItem,
   RecommendationPayload,
   StudioState,
   StudioVersion,
@@ -78,14 +79,14 @@ function getPrimaryShopItems(payload: RecommendationPayload, max = 4) {
 }
 
 function getOutfitItems(payload: RecommendationPayload) {
-  const items: any[] = [];
+  const items: RecommendationItem[] = [];
   if (Array.isArray(payload.outfit) && payload.outfit.length) {
     items.push(...payload.outfit);
   }
   if (Array.isArray(payload.accessories)) {
     items.push(...payload.accessories);
   }
-  return items
+  return items;
 }
 
 function mergeCommunityLooks(

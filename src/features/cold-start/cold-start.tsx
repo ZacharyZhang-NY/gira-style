@@ -167,7 +167,6 @@ export function ColdStart() {
   const totalSteps = totalQuestions + (hasStyleStep ? 2 : 1);
   const isStyleStep = hasStyleStep && stepIndex === styleStepIndex;
   const isZipStep = stepIndex === zipStepIndex;
-  const hasZipCode = Boolean(answers.zipCode.trim());
   const question =
     isZipStep || isStyleStep ? null : COLD_START_QUESTIONS[stepIndex];
   const answerValue = question ? answers[question.id] : null;
@@ -616,7 +615,7 @@ export function ColdStart() {
                       Back
                     </Button>
 
-                    {isStyleStep ? (
+                    {isZipStep ? (
                       <Button
                         onClick={finish}
                         isLoading={isSaving}
@@ -626,7 +625,7 @@ export function ColdStart() {
                       </Button>
                     ) : (
                       <Button onClick={goNext} className="text-xs sm:text-sm">
-                        {isZipStep && !hasZipCode ? "Skip" : "Next"}
+                        Next
                       </Button>
                     )}
                   </div>
