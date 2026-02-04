@@ -17,6 +17,7 @@ const TARGET_SAMPLE_RATE = 16000;
 const VAD_CHECK_INTERVAL_MS = 200;
 const VAD_SILENCE_MS = 1000;
 const VAD_MIN_RMS = 0.015;
+const FINALIZE_GRACE_MS = 10_000;
 
 function arrayBufferToBase64(buffer: ArrayBufferLike) {
   const bytes = new Uint8Array(buffer);
@@ -353,11 +354,11 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
 
   const maybeComplete = React.useCallback(() => {
     if (completionSentRef.current) return;
-    if (!payloadReceivedRef.current) return;
+    if (!payloadReceivedRef.current && !sessionEndedRef.current) return;
 
     const now = performance.now();
     if (hardCutAtRef.current == null) {
-      hardCutAtRef.current = now + 8000;
+      hardCutAtRef.current = now + FINALIZE_GRACE_MS;
     }
     const remaining = hardCutAtRef.current - now;
 
@@ -499,7 +500,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
         pendingStylePayloadRef.current = msg.payload.trim();
         payloadReceivedRef.current = true;
         if (hardCutAtRef.current == null) {
-          hardCutAtRef.current = performance.now() + 8000;
+          hardCutAtRef.current = performance.now() + FINALIZE_GRACE_MS;
         }
         // Stop capturing input and prevent "Done speaking" from being clickable once we enter finalization.
         stopMicPipeline();
@@ -507,6 +508,14 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
         maybeComplete();
       } else if (msg.type === "session_end") {
         sessionEndedRef.current = true;
+        // Defensive: allow completion even if style_payload never arrived.
+        if (!payloadReceivedRef.current) {
+          payloadReceivedRef.current = true;
+          pendingStylePayloadRef.current = pendingStylePayloadRef.current ?? "";
+          if (hardCutAtRef.current == null) {
+            hardCutAtRef.current = performance.now() + FINALIZE_GRACE_MS;
+          }
+        }
         maybeComplete();
       } else if (msg.type === "error") {
         setError(msg.message || "Live assistant error");

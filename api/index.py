@@ -99,6 +99,12 @@ DEFAULT_LIVE_MODEL_ID = os.getenv(
 DEFAULT_LIVE_MODALITIES = ["AUDIO"]
 DEFAULT_LIVE_API_VERSION = os.getenv("LIVE_API_VERSION", "v1beta")
 DEFAULT_LIVE_VOICE = os.getenv("LIVE_VOICE", "Zephyr")
+LIVE_ENABLE_TRANSCRIPTION = os.getenv("LIVE_ENABLE_TRANSCRIPTION", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+LIVE_SUMMARY_MODEL_ID = os.getenv("LIVE_SUMMARY_MODEL_ID", CHIPS_MODEL).strip() or CHIPS_MODEL
 
 WEATHER_CACHE_TTL_SECONDS = float(os.getenv('WEATHER_CACHE_TTL_SECONDS', '600'))
 WEATHER_CACHE_MAX_ENTRIES = int(os.getenv('WEATHER_CACHE_MAX_ENTRIES', '200'))
@@ -861,6 +867,8 @@ async def _handle_live_session(ws, client: genai.Client):
     live_config = types.LiveConnectConfig(
         response_modalities=response_modalities,
         speech_config=speech_config,
+        input_audio_transcription=types.AudioTranscriptionConfig() if LIVE_ENABLE_TRANSCRIPTION else None,
+        output_audio_transcription=types.AudioTranscriptionConfig() if LIVE_ENABLE_TRANSCRIPTION else None,
         context_window_compression=types.ContextWindowCompressionConfig(
             trigger_tokens=25600,
             sliding_window=types.SlidingWindow(target_tokens=12800),
@@ -875,7 +883,7 @@ async def _handle_live_session(ws, client: genai.Client):
             await _send_json(ws, {"type": "ready", "model": model_id})
             if not initial_user_message:
                 # Start the conversation with explicit instruction to follow the output format
-                await _send_live_input(session, "Begin. When you have gathered enough information, you MUST say exactly: 'This has been so helpful! I have a really good sense of your style now. I'm going to get to work on your personalized catalog.' Do not add any other farewell. IMMEDIATELY after that sentence, output the style payload between ---BEGIN_STYLE_PAYLOAD--- and ---END_STYLE_PAYLOAD--- markers.", end_of_turn=True)
+                await _send_live_input(session, "Begin. When you have gathered enough information, you MUST say exactly: 'This has been so helpful! I have a really good sense of your style now. I'm going to get to work on your personalized catalog.' Do not add any other farewell. IMMEDIATELY after that sentence, output the style payload as TEXT ONLY between ---BEGIN_STYLE_PAYLOAD--- and ---END_STYLE_PAYLOAD--- markers (do not read it aloud).", end_of_turn=True)
 
             payload_parts = []
             payload_complete = False
@@ -884,7 +892,10 @@ async def _handle_live_session(ws, client: genai.Client):
             recent_text = ""
             recent_text_limit = 8000
             force_timeout_task = None
-            pending_force_task = None
+            pending_finalize_task = None
+            transcript_lines = []
+            partial_input_transcript = ""
+            partial_output_transcript = ""
 
             def _touch_activity():
                 nonlocal last_activity
@@ -913,41 +924,113 @@ async def _handle_live_session(ws, client: genai.Client):
                 )
                 return " ".join(cleaned.split())
 
-            async def _send_minimal_and_close(reason: str):
+            def _minimal_style_payload():
+                return (
+                    "[USER INTENT]:\n"
+                    "[ESTABLISHED STYLE]:\n"
+                    "[STYLE ASPIRATIONS]:\n"
+                    "[FASHION PERSONALITY]:"
+                )
+
+            def _build_transcript_text():
+                lines = list(transcript_lines)
+                if partial_input_transcript:
+                    lines.append(f"[USER]: {partial_input_transcript}")
+                if partial_output_transcript:
+                    lines.append(f"[ASSISTANT]: {partial_output_transcript}")
+                return "\n".join(lines).strip()
+
+            async def _generate_style_payload():
+                transcript = _build_transcript_text()
+                if not transcript:
+                    return _minimal_style_payload()
+
+                summary_prompt = (
+                    "You are an internal style researcher. Based on the conversation transcript below, "
+                    "output EXACTLY 4 lines (no extra text, no code fences):\n"
+                    "[USER INTENT]: ...\n"
+                    "[ESTABLISHED STYLE]: ...\n"
+                    "[STYLE ASPIRATIONS]: ...\n"
+                    "[FASHION PERSONALITY]: ...\n\n"
+                    "Transcript:\n"
+                    f"{transcript}\n"
+                )
+
+                try:
+                    response = await client.aio.models.generate_content(
+                        model=LIVE_SUMMARY_MODEL_ID,
+                        contents=summary_prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=0.3,
+                            max_output_tokens=512,
+                            thinking_config=types.ThinkingConfig(
+                                include_thoughts=False,
+                                thinking_level="MINIMAL",
+                            ),
+                        ),
+                    )
+                except Exception as e:
+                    logger.warning("[LiveSession] Summary generation failed: %s", e)
+                    return _minimal_style_payload()
+
+                raw_text = ""
+                try:
+                    candidates = getattr(response, "candidates", None) or []
+                    if candidates:
+                        parts = getattr(candidates[0].content, "parts", None) or []
+                        for part in parts:
+                            text = getattr(part, "text", None)
+                            if text:
+                                raw_text += text
+                except Exception:
+                    raw_text = ""
+
+                cleaned = (raw_text or "").strip()
+                if cleaned.startswith("```"):
+                    cleaned = cleaned.strip("`").strip()
+
+                required_labels = [
+                    "[user intent]:",
+                    "[established style]:",
+                    "[style aspirations]:",
+                    "[fashion personality]:",
+                ]
+                lower = cleaned.lower()
+                if cleaned and all(label in lower for label in required_labels):
+                    return cleaned
+                return _minimal_style_payload()
+
+            async def _finalize_and_signal_end(reason: str):
                 nonlocal payload_complete
-                # Always send a session_end so the client can close cleanly.
-                if not payload_complete:
-                    payload_complete = True
-                    minimal_payload = f"""{BEGIN_PAYLOAD}
-[USER INTENT]:
-[ESTABLISHED STYLE]:
-[STYLE ASPIRATIONS]:
-[FASHION PERSONALITY]:
-{END_PAYLOAD}"""
-                    await _send_json(ws, {"type": "style_payload", "payload": minimal_payload})
-                    await asyncio.sleep(0.05)
+                if payload_complete:
+                    return True
+                payload_complete = True
+                payload_text = await _generate_style_payload()
+                if not payload_text:
+                    payload_text = _minimal_style_payload()
+                await _send_json(ws, {"type": "style_payload", "payload": payload_text})
+                await asyncio.sleep(0.05)
                 await _send_json(ws, {"type": "session_end", "reason": reason})
-                # Do NOT close server-side; let client close to avoid frame errors
                 return True
 
-            async def _grace_force(reason: str, delay: float = 1.5):
-                nonlocal pending_force_task
+            async def _grace_finalize(reason: str, delay: float = 1.5):
+                nonlocal pending_finalize_task
                 try:
                     await asyncio.sleep(delay)
                     if payload_complete:
                         return True
-                    return await _send_minimal_and_close(reason)
+                    return await _finalize_and_signal_end(reason)
                 finally:
-                    pending_force_task = None
+                    pending_finalize_task = None
 
-            async def _schedule_force(reason: str, delay: float = 1.5):
-                nonlocal pending_force_task
+            async def _schedule_finalize(reason: str, delay: float = 1.5):
+                nonlocal pending_finalize_task
                 if payload_complete:
                     return True
-                if pending_force_task:
+                if pending_finalize_task:
                     return True
                 _touch_activity()
-                pending_force_task = asyncio.create_task(_grace_force(reason, delay))
+                pending_finalize_task = asyncio.create_task(_grace_finalize(reason, delay))
                 return True
 
             async def _maybe_force_payload():
@@ -968,11 +1051,6 @@ async def _handle_live_session(ws, client: genai.Client):
                         "that's enough information",
                     ]
                 )
-                # Don't force early; require some interaction or time unless explicit end
-                elapsed = time.time() - session_start_ts
-                current_turns = getattr(_handle_client_message, "user_turns", 0)
-                if not explicit_end and current_turns < 3 and elapsed < 60:
-                    return False
                 if (
                     "concluding the session" in recent_tail
                     or "session complete" in recent_tail
@@ -997,7 +1075,7 @@ async def _handle_live_session(ws, client: genai.Client):
                     or explicit_end
                 ):
                     logger.info(f"[LiveSession] URGENT: Detected concluding marker - forcing payload send; recent_tail='{recent_tail}'")
-                    return await _schedule_force("concluding_detected", 1.5)
+                    return await _schedule_finalize("concluding_detected", 1.5)
 
                 exit_phrases = [
                     "i'll talk to you soon",
@@ -1044,7 +1122,12 @@ async def _handle_live_session(ws, client: genai.Client):
                     logger.info(f"[LiveSession] Detected natural exit phrase")
                     # Send the payload quickly; client is responsible for delaying navigation
                     # long enough to let the goodbye audio finish playing.
-                    return await _schedule_force("natural_exit_detected", 0.5)
+                    return await _schedule_finalize("natural_exit_detected", 0.5)
+                # Don't finalize early unless we saw a strong exit/concluding marker.
+                elapsed = time.time() - session_start_ts
+                current_turns = getattr(_handle_client_message, "user_turns", 0)
+                if not explicit_end and current_turns < 3 and elapsed < 60:
+                    return False
                 return False
 
             async def _force_timeout():
@@ -1063,12 +1146,14 @@ async def _handle_live_session(ws, client: genai.Client):
                     return
                 if payload_complete:
                     return
-                logger.info("[LiveSession] Timeout reached without payload - forcing minimal payload")
-                await _schedule_force("timeout_force_payload", 0.5)
+                logger.info("[LiveSession] Timeout reached without payload - finalizing with generated payload")
+                await _schedule_finalize("timeout_force_payload", 0.5)
 
-            async def handle_text_chunk(chunk: str):
-                nonlocal buffer, in_payload, payload_complete
+            async def handle_text_chunk(chunk: str, *, emit_assistant_text: bool = True):
+                nonlocal buffer, in_payload, payload_complete, pending_finalize_task
                 if not chunk:
+                    return
+                if payload_complete:
                     return
                 logger.info(f"[LiveSession] Text chunk received ({len(chunk)} chars): {chunk[:100]}...")
                 # Direct check for payload markers
@@ -1093,14 +1178,16 @@ async def _handle_live_session(ws, client: genai.Client):
                         if begin_index == -1:
                             safe_len = max(0, len(buffer) - (len(BEGIN_PAYLOAD) - 1))
                             if safe_len:
-                                await _send_json(ws, {"type": "assistant_text", "text": buffer[:safe_len]})
+                                if emit_assistant_text:
+                                    await _send_json(ws, {"type": "assistant_text", "text": buffer[:safe_len]})
                                 buffer = buffer[safe_len:]
                             else:
                                 break
                         else:
                             if begin_index:
-                                await _send_json(ws, {"type": "assistant_text", "text": buffer[:begin_index]})
-                                logger.info(f"[LiveSession] Sent assistant_text: {buffer[:begin_index][:100]}...")
+                                if emit_assistant_text:
+                                    await _send_json(ws, {"type": "assistant_text", "text": buffer[:begin_index]})
+                                    logger.info(f"[LiveSession] Sent assistant_text: {buffer[:begin_index][:100]}...")
                             buffer = buffer[begin_index + len(BEGIN_PAYLOAD):]
                             in_payload = True
                     else:
@@ -1116,19 +1203,24 @@ async def _handle_live_session(ws, client: genai.Client):
                             in_payload = False
                             payload = "".join(payload_parts).strip()
                             logger.info(f"[LiveSession] Payload captured: {payload[:200]}...")
-                            # Send payload and session_end, then wait a moment before closing
-                            # to ensure client receives the messages
+                            if pending_finalize_task:
+                                pending_finalize_task.cancel()
+                                pending_finalize_task = None
+                            # Send payload and session_end; client is responsible for closing after it finishes playback.
                             await _send_json(ws, {"type": "style_payload", "payload": payload})
                             logger.info("[LiveSession] Sent style_payload")
-                            await asyncio.sleep(0.5)  # Give client time to process
+                            await asyncio.sleep(0.05)
                             await _send_json(ws, {"type": "session_end", "reason": "style_payload_captured"})
                             logger.info("[LiveSession] Sent session_end")
-                            await asyncio.sleep(0.5)  # Give client time to receive
-                            await _close_ws(ws)
                             return
 
             async def handle_signal_chunk(chunk: str):
                 if not chunk:
+                    return
+                # Model thoughts can contain instruction echoes; avoid treating them as user-visible text
+                # when transcription is enabled, otherwise we can trigger premature exits.
+                if LIVE_ENABLE_TRANSCRIPTION:
+                    _touch_activity()
                     return
                 _append_recent_text(chunk)
                 await _maybe_force_payload()
@@ -1159,7 +1251,7 @@ async def _handle_live_session(ws, client: genai.Client):
                         break
 
             async def pump_from_model():
-                nonlocal force_timeout_task
+                nonlocal force_timeout_task, partial_input_transcript, partial_output_transcript
                 if force_timeout_task is None:
                     force_timeout_task = asyncio.create_task(_force_timeout())
                 while True:
@@ -1169,6 +1261,46 @@ async def _handle_live_session(ws, client: genai.Client):
                             # Handle server_content format (primary for newer API)
                             server_content = getattr(response, "server_content", None)
                             if server_content:
+                                input_tr = getattr(server_content, "input_transcription", None)
+                                if input_tr and getattr(input_tr, "text", None):
+                                    _touch_activity()
+                                    text = str(getattr(input_tr, "text", "") or "").strip()
+                                    if text:
+                                        partial_input_transcript = text
+                                        if getattr(input_tr, "finished", False):
+                                            transcript_lines.append(f"[USER]: {text}")
+                                            partial_input_transcript = ""
+                                        lower = text.lower()
+                                        if any(
+                                            phrase in lower
+                                            for phrase in [
+                                                "i'm done",
+                                                "i am done",
+                                                "that's it",
+                                                "thats it",
+                                                "done",
+                                                "end",
+                                                "finish",
+                                                "go ahead",
+                                            ]
+                                        ):
+                                            await _schedule_finalize(
+                                                "user_done_transcribed", 0.2
+                                            )
+
+                                output_tr = getattr(server_content, "output_transcription", None)
+                                if output_tr and getattr(output_tr, "text", None):
+                                    _touch_activity()
+                                    text = str(getattr(output_tr, "text", "") or "").strip()
+                                    if text:
+                                        partial_output_transcript = text
+                                        await handle_text_chunk(
+                                            text, emit_assistant_text=False
+                                        )
+                                        if getattr(output_tr, "finished", False):
+                                            transcript_lines.append(f"[ASSISTANT]: {text}")
+                                            partial_output_transcript = ""
+
                                 model_turn = getattr(server_content, "model_turn", None)
                                 if model_turn:
                                     parts = getattr(model_turn, "parts", [])
@@ -1176,8 +1308,6 @@ async def _handle_live_session(ws, client: genai.Client):
                                         if getattr(part, "text", None):
                                             logger.info(f"[LiveSession] Got text from server_content: {part.text[:100]}...")
                                             await handle_text_chunk(part.text)
-                                            if payload_complete:
-                                                return
                                         if getattr(part, "thought", None):
                                             await handle_signal_chunk(str(part.thought))
                                         if getattr(part, "inline_data", None):
@@ -1192,8 +1322,6 @@ async def _handle_live_session(ws, client: genai.Client):
                             if getattr(response, "text", None):
                                 logger.info(f"[LiveSession] Got text from response.text: {response.text[:100]}...")
                                 await handle_text_chunk(response.text)
-                                if payload_complete:
-                                    return
                             if getattr(response, "thought", None):
                                 await handle_signal_chunk(str(response.thought))
                             if getattr(response, "data", None):
@@ -1212,13 +1340,51 @@ async def _handle_live_session(ws, client: genai.Client):
                                 # Try server_content format
                                 server_content = getattr(message, "server_content", None)
                                 if server_content:
+                                    input_tr = getattr(server_content, "input_transcription", None)
+                                    if input_tr and getattr(input_tr, "text", None):
+                                        _touch_activity()
+                                        text = str(getattr(input_tr, "text", "") or "").strip()
+                                        if text:
+                                            partial_input_transcript = text
+                                            if getattr(input_tr, "finished", False):
+                                                transcript_lines.append(f"[USER]: {text}")
+                                                partial_input_transcript = ""
+                                            lower = text.lower()
+                                            if any(
+                                                phrase in lower
+                                                for phrase in [
+                                                    "i'm done",
+                                                    "i am done",
+                                                    "that's it",
+                                                    "thats it",
+                                                    "done",
+                                                    "end",
+                                                    "finish",
+                                                    "go ahead",
+                                                ]
+                                            ):
+                                                await _schedule_finalize(
+                                                    "user_done_transcribed", 0.2
+                                                )
+
+                                    output_tr = getattr(server_content, "output_transcription", None)
+                                    if output_tr and getattr(output_tr, "text", None):
+                                        _touch_activity()
+                                        text = str(getattr(output_tr, "text", "") or "").strip()
+                                        if text:
+                                            partial_output_transcript = text
+                                            await handle_text_chunk(
+                                                text, emit_assistant_text=False
+                                            )
+                                            if getattr(output_tr, "finished", False):
+                                                transcript_lines.append(f"[ASSISTANT]: {text}")
+                                                partial_output_transcript = ""
+
                                     model_turn = getattr(server_content, "model_turn", None)
                                     if model_turn and getattr(model_turn, "parts", None):
                                         for part in model_turn.parts:
                                             if getattr(part, "text", None):
                                                 await handle_text_chunk(part.text)
-                                                if payload_complete:
-                                                    return
                                             if getattr(part, "thought", None):
                                                 await handle_signal_chunk(str(part.thought))
                                             if getattr(part, "inline_data", None):
@@ -1230,8 +1396,6 @@ async def _handle_live_session(ws, client: genai.Client):
                                 # Try direct text/data format
                                 if getattr(message, "text", None):
                                     await handle_text_chunk(message.text)
-                                    if payload_complete:
-                                        return
                                 if getattr(message, "thought", None):
                                     await handle_signal_chunk(str(message.thought))
                                 if getattr(message, "data", None):
