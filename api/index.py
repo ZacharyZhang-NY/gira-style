@@ -1424,6 +1424,7 @@ async def _handle_live_session(ws, client: genai.Client):
                 task.cancel()
             if not payload_complete:
                 await _send_json(ws, {"type": "session_end", "reason": "client_closed"})
+                await asyncio.sleep(0.05)
                 await _close_ws(ws)
     except Exception as e:
         logger.exception("Live session error")

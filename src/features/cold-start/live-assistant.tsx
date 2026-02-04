@@ -18,6 +18,18 @@ const VAD_CHECK_INTERVAL_MS = 200;
 const VAD_SILENCE_MS = 1000;
 const VAD_MIN_RMS = 0.015;
 const FINALIZE_GRACE_MS = 10_000;
+const REQUIRED_END_PHRASE =
+  "This has been so helpful! I have a really good sense of your style now. I'm going to get to work on your personalized catalog.";
+
+function normalizeForMatch(text: string) {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[’‘`]/g, "'")
+    .replace(/[^a-z0-9']+/g, " ")
+    .trim();
+}
+
+const REQUIRED_END_PHRASE_NORMALIZED = normalizeForMatch(REQUIRED_END_PHRASE);
 
 function arrayBufferToBase64(buffer: ArrayBufferLike) {
   const bytes = new Uint8Array(buffer);
@@ -177,6 +189,10 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const [audioLevel, setAudioLevel] = React.useState(0);
   const [error, setError] = React.useState("");
   const [waitingForResponse, setWaitingForResponse] = React.useState(false);
+  const waitingForResponseRef = React.useRef(waitingForResponse);
+  React.useEffect(() => {
+    waitingForResponseRef.current = waitingForResponse;
+  }, [waitingForResponse]);
   
   // Ref to track status for callbacks
   const statusRef = React.useRef(status);
@@ -199,6 +215,9 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const pendingStylePayloadRef = React.useRef<string | null>(null);
   const sessionEndedRef = React.useRef(false);
   const payloadReceivedRef = React.useRef(false);
+  const endOfTurnEverSentRef = React.useRef(false);
+  const hasAssistantReplyRef = React.useRef(false);
+  const assistantTextBufferRef = React.useRef("");
   const lastAssistantAudioAtRef = React.useRef<number | null>(null);
   const completeDelayTimerRef = React.useRef<number | null>(null);
   const hardCutAtRef = React.useRef<number | null>(null);
@@ -233,6 +252,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (endOfTurnSentRef.current) return;
     console.log("[LiveAssistant] Sending end_of_turn");
+    endOfTurnEverSentRef.current = true;
     endOfTurnSentRef.current = true;
     setWaitingForResponse(true);
     ws.send(JSON.stringify({
@@ -390,6 +410,22 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     }
   }, []);
 
+  const enterFinalization = React.useCallback((reason: string) => {
+    if (completionSentRef.current || completedRef.current) return;
+    console.log("[LiveAssistant] Entering finalization:", reason);
+    payloadReceivedRef.current = true;
+    pendingStylePayloadRef.current = pendingStylePayloadRef.current ?? "";
+    if (hardCutAtRef.current == null) {
+      hardCutAtRef.current = performance.now() + FINALIZE_GRACE_MS;
+    }
+    stopMicPipeline();
+    setWaitingForResponse(true);
+    if (mountedRef.current) {
+      setStatus("finalizing");
+    }
+    maybeComplete();
+  }, [maybeComplete, stopMicPipeline]);
+
   // Play audio chunk - Gemini Live API returns raw PCM 24kHz 16-bit little-endian
   const playAudioChunk = React.useCallback(async (audioB64: string, mimeType?: string) => {
     if (!playContextRef.current) {
@@ -489,34 +525,29 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
         // Start mic immediately when ready - just like the working utility
         startMicPipeline();
       } else if (msg.type === "assistant_audio" && msg.audio) {
+        hasAssistantReplyRef.current = true;
         // Queue audio for playback
         playQueueRef.current.push({ audio: msg.audio, mime: msg.mime_type || "audio/pcm;rate=24000" });
         if (!payloadReceivedRef.current) {
           lastAssistantAudioAtRef.current = performance.now();
         }
         processPlayQueue();
+      } else if (msg.type === "assistant_text" && typeof msg.text === "string") {
+        hasAssistantReplyRef.current = true;
+        assistantTextBufferRef.current = `${assistantTextBufferRef.current}\n${msg.text}`.slice(-2000);
+        const normalized = normalizeForMatch(assistantTextBufferRef.current);
+        if (normalized.includes(REQUIRED_END_PHRASE_NORMALIZED)) {
+          sessionEndedRef.current = true;
+          enterFinalization("assistant_end_phrase_detected");
+        }
       } else if (msg.type === "style_payload" && msg.payload) {
         console.log("[LiveAssistant] Received style_payload");
         pendingStylePayloadRef.current = msg.payload.trim();
-        payloadReceivedRef.current = true;
-        if (hardCutAtRef.current == null) {
-          hardCutAtRef.current = performance.now() + FINALIZE_GRACE_MS;
-        }
-        // Stop capturing input and prevent "Done speaking" from being clickable once we enter finalization.
-        stopMicPipeline();
-        setWaitingForResponse(true);
-        maybeComplete();
+        sessionEndedRef.current = true;
+        enterFinalization("style_payload_received");
       } else if (msg.type === "session_end") {
         sessionEndedRef.current = true;
-        // Defensive: allow completion even if style_payload never arrived.
-        if (!payloadReceivedRef.current) {
-          payloadReceivedRef.current = true;
-          pendingStylePayloadRef.current = pendingStylePayloadRef.current ?? "";
-          if (hardCutAtRef.current == null) {
-            hardCutAtRef.current = performance.now() + FINALIZE_GRACE_MS;
-          }
-        }
-        maybeComplete();
+        enterFinalization("session_end_received");
       } else if (msg.type === "error") {
         setError(msg.message || "Live assistant error");
         setStatus("error");
@@ -524,7 +555,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     } catch {
       // Ignore non-JSON
     }
-  }, [startMicPipeline, stopMicPipeline, processPlayQueue, maybeComplete]);
+  }, [enterFinalization, processPlayQueue, startMicPipeline]);
 
   // Track if we're currently connecting to prevent race conditions
   const connectingRef = React.useRef(false);
@@ -557,29 +588,38 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       setWaitingForResponse(false);
     };
 
-    ws.onclose = () => {
-      console.log("[LiveAssistant] WebSocket closed");
+    ws.onclose = (event) => {
+      console.log("[LiveAssistant] WebSocket closed", event.code, event.reason);
       connectingRef.current = false;
       wsRef.current = null;
       stopMicPipeline();
+      const shouldForceFinalize =
+        !completionSentRef.current &&
+        !completedRef.current &&
+        !payloadReceivedRef.current &&
+        !sessionEndedRef.current &&
+        endOfTurnEverSentRef.current &&
+        hasAssistantReplyRef.current;
       // Reset endOfTurnSentRef so we can send audio on reconnect
       endOfTurnSentRef.current = false;
       voiceStartedRef.current = false;
+      if (shouldForceFinalize) {
+        sessionEndedRef.current = true;
+        enterFinalization("ws_closed_after_turn");
+        return;
+      }
       // Reset waiting state when connection closes unexpectedly
-      if (!payloadReceivedRef.current) {
+      if (!payloadReceivedRef.current && !waitingForResponseRef.current) {
         setWaitingForResponse(false);
       }
-      // If we already have the payload and the session ended, try to complete
       maybeComplete();
       if (completionSentRef.current || sessionEndedRef.current || completedRef.current) return;
       if (mountedRef.current) {
-        setStatus((prev) => {
-          if (prev === "error") return "error";
-          return "idle";
-        });
+        setError("Live assistant disconnected. Please reconnect.");
+        setStatus("error");
       }
     };
-  }, [handleMessage, stopMicPipeline, maybeComplete]);
+  }, [enterFinalization, handleMessage, maybeComplete, stopMicPipeline, waitingForResponseRef]);
 
   // Cleanup everything
   const cleanup = React.useCallback(() => {
@@ -600,6 +640,9 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     pendingStylePayloadRef.current = null;
     sessionEndedRef.current = false;
     payloadReceivedRef.current = false;
+    endOfTurnEverSentRef.current = false;
+    hasAssistantReplyRef.current = false;
+    assistantTextBufferRef.current = "";
     lastAssistantAudioAtRef.current = null;
     hardCutAtRef.current = null;
     if (completeDelayTimerRef.current) {
