@@ -18,18 +18,46 @@ const VAD_CHECK_INTERVAL_MS = 200;
 const VAD_SILENCE_MS = 1000;
 const VAD_MIN_RMS = 0.015;
 const FINALIZE_GRACE_MS = 10_000;
-const REQUIRED_END_PHRASE =
-  "This has been so helpful! I have a really good sense of your style now. I'm going to get to work on your personalized catalog.";
+const END_PHRASE_HINTS = [
+  "this has been so helpful",
+  "good sense of your style",
+  "get to work on your personalized catalog",
+  "get to work on your personalised catalogue",
+  "personalized catalog",
+  "personalised catalogue",
+];
 
 function normalizeForMatch(text: string) {
   return (text || "")
     .toLowerCase()
-    .replace(/[’‘`]/g, "'")
-    .replace(/[^a-z0-9']+/g, " ")
+    .replace(/[’‘`']/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
 
-const REQUIRED_END_PHRASE_NORMALIZED = normalizeForMatch(REQUIRED_END_PHRASE);
+function hasEndPhrase(normalized: string) {
+  if (!normalized) return false;
+  const hasHelpful =
+    normalized.includes("this has been so helpful") ||
+    normalized.includes("good sense of your style");
+  const hasCatalog =
+    normalized.includes("personalized catalog") ||
+    normalized.includes("personalised catalogue") ||
+    normalized.includes("get to work on your personalized catalog") ||
+    normalized.includes("get to work on your personalised catalogue");
+  if (hasHelpful && hasCatalog) return true;
+  return END_PHRASE_HINTS.some((phrase) =>
+    normalized.includes(normalizeForMatch(phrase)),
+  );
+}
+
+function extractStylePayloadFromText(text: string) {
+  if (!text) return null;
+  const match = text.match(/---begin_style_payload---([\s\S]*?)---end_style_payload---/i);
+  if (!match) return null;
+  const payload = match[1]?.trim();
+  return payload || null;
+}
 
 function arrayBufferToBase64(buffer: ArrayBufferLike) {
   const bytes = new Uint8Array(buffer);
@@ -260,6 +288,16 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       audio: "",
       mime_type: "audio/pcm",
       end_of_turn: true,
+    }));
+  }, []);
+
+  const sendControl = React.useCallback((action: string, extra?: Record<string, unknown>) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: "control",
+      action,
+      ...(extra || {}),
     }));
   }, []);
 
@@ -534,10 +572,18 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
         processPlayQueue();
       } else if (msg.type === "assistant_text" && typeof msg.text === "string") {
         hasAssistantReplyRef.current = true;
-        assistantTextBufferRef.current = `${assistantTextBufferRef.current}\n${msg.text}`.slice(-2000);
-        const normalized = normalizeForMatch(assistantTextBufferRef.current);
-        if (normalized.includes(REQUIRED_END_PHRASE_NORMALIZED)) {
+        assistantTextBufferRef.current = `${assistantTextBufferRef.current}\n${msg.text}`.slice(-6000);
+        const extractedPayload = extractStylePayloadFromText(assistantTextBufferRef.current);
+        if (extractedPayload && !isEmptyStylePayload(extractedPayload)) {
+          pendingStylePayloadRef.current = extractedPayload;
           sessionEndedRef.current = true;
+          enterFinalization("payload_detected_in_text");
+          return;
+        }
+        const normalized = normalizeForMatch(assistantTextBufferRef.current);
+        if (hasEndPhrase(normalized)) {
+          sessionEndedRef.current = true;
+          sendControl("finalize");
           enterFinalization("assistant_end_phrase_detected");
         }
       } else if (msg.type === "style_payload" && msg.payload) {
@@ -555,7 +601,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     } catch {
       // Ignore non-JSON
     }
-  }, [enterFinalization, processPlayQueue, startMicPipeline]);
+  }, [enterFinalization, processPlayQueue, sendControl, startMicPipeline]);
 
   // Track if we're currently connecting to prevent race conditions
   const connectingRef = React.useRef(false);

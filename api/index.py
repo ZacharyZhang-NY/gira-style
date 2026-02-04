@@ -854,6 +854,8 @@ async def _handle_live_session(ws, client: genai.Client):
         if "native-audio" not in (model_id or ""):
             response_modalities = [*response_modalities, "TEXT"]
             session_config["response_modalities"] = response_modalities
+    # If we're audio-only, ensure transcription is enabled for end-phrase detection.
+    transcription_enabled = LIVE_ENABLE_TRANSCRIPTION or ("TEXT" not in response_modalities)
     speech_config = None
     if "AUDIO" in response_modalities:
         speech_config = types.SpeechConfig(
@@ -867,8 +869,8 @@ async def _handle_live_session(ws, client: genai.Client):
     live_config = types.LiveConnectConfig(
         response_modalities=response_modalities,
         speech_config=speech_config,
-        input_audio_transcription=types.AudioTranscriptionConfig() if LIVE_ENABLE_TRANSCRIPTION else None,
-        output_audio_transcription=types.AudioTranscriptionConfig() if LIVE_ENABLE_TRANSCRIPTION else None,
+        input_audio_transcription=types.AudioTranscriptionConfig() if transcription_enabled else None,
+        output_audio_transcription=types.AudioTranscriptionConfig() if transcription_enabled else None,
         context_window_compression=types.ContextWindowCompressionConfig(
             trigger_tokens=25600,
             sliding_window=types.SlidingWindow(target_tokens=12800),
@@ -909,6 +911,14 @@ async def _handle_live_session(ws, client: genai.Client):
                 if len(recent_text) > recent_text_limit:
                     recent_text = recent_text[-recent_text_limit:]
                 _touch_activity()
+
+            def _find_marker(haystack: str, needle: str) -> int:
+                if not haystack or not needle:
+                    return -1
+                try:
+                    return haystack.lower().find(needle.lower())
+                except Exception:
+                    return -1
 
             def _normalized_recent_tail():
                 tail = recent_text[-600:]
@@ -1157,9 +1167,9 @@ async def _handle_live_session(ws, client: genai.Client):
                     return
                 logger.info(f"[LiveSession] Text chunk received ({len(chunk)} chars): {chunk[:100]}...")
                 # Direct check for payload markers
-                if BEGIN_PAYLOAD in chunk:
+                if BEGIN_PAYLOAD.lower() in chunk.lower():
                     logger.info(f"[LiveSession] DETECTED BEGIN_PAYLOAD marker in chunk!")
-                if END_PAYLOAD in chunk:
+                if END_PAYLOAD.lower() in chunk.lower():
                     logger.info(f"[LiveSession] DETECTED END_PAYLOAD marker in chunk!")
                 buffer += chunk
                 _append_recent_text(chunk)
@@ -1174,7 +1184,7 @@ async def _handle_live_session(ws, client: genai.Client):
                 
                 while buffer:
                     if not in_payload:
-                        begin_index = buffer.find(BEGIN_PAYLOAD)
+                        begin_index = _find_marker(buffer, BEGIN_PAYLOAD)
                         if begin_index == -1:
                             safe_len = max(0, len(buffer) - (len(BEGIN_PAYLOAD) - 1))
                             if safe_len:
@@ -1191,7 +1201,7 @@ async def _handle_live_session(ws, client: genai.Client):
                             buffer = buffer[begin_index + len(BEGIN_PAYLOAD):]
                             in_payload = True
                     else:
-                        end_index = buffer.find(END_PAYLOAD)
+                        end_index = _find_marker(buffer, END_PAYLOAD)
                         if end_index == -1:
                             payload_parts.append(buffer)
                             buffer = ""
@@ -1219,7 +1229,7 @@ async def _handle_live_session(ws, client: genai.Client):
                     return
                 # Model thoughts can contain instruction echoes; avoid treating them as user-visible text
                 # when transcription is enabled, otherwise we can trigger premature exits.
-                if LIVE_ENABLE_TRANSCRIPTION:
+                if transcription_enabled:
                     _touch_activity()
                     return
                 _append_recent_text(chunk)
@@ -1241,6 +1251,15 @@ async def _handle_live_session(ws, client: genai.Client):
                     
                     # Check if user is trying to end the session
                     msg_type = message.get("type", "")
+                    if msg_type == "control":
+                        action = str(message.get("action", "") or "").strip().lower()
+                        if action in ("finalize", "finish", "end", "stop"):
+                            logger.info(f"[LiveSession] Client requested finalize via control action='{action}'")
+                            await _schedule_finalize(f"client_control_{action}", 0.2)
+                            continue
+                        if action in ("close",):
+                            logger.info("[LiveSession] Client requested close via control action")
+                            break
                     if msg_type == "input_text":
                         text = message.get("text", "").lower().strip()
                         if any(phrase in text for phrase in ["i'm done", "thats it", "that's it", "i am done", "done", "end", "finish", "complete"]):
@@ -1295,7 +1314,7 @@ async def _handle_live_session(ws, client: genai.Client):
                                     if text:
                                         partial_output_transcript = text
                                         await handle_text_chunk(
-                                            text, emit_assistant_text=False
+                                            text, emit_assistant_text=True
                                         )
                                         if getattr(output_tr, "finished", False):
                                             transcript_lines.append(f"[ASSISTANT]: {text}")
@@ -1374,7 +1393,7 @@ async def _handle_live_session(ws, client: genai.Client):
                                         if text:
                                             partial_output_transcript = text
                                             await handle_text_chunk(
-                                                text, emit_assistant_text=False
+                                                text, emit_assistant_text=True
                                             )
                                             if getattr(output_tr, "finished", False):
                                                 transcript_lines.append(f"[ASSISTANT]: {text}")
