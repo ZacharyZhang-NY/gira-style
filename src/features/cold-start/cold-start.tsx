@@ -305,32 +305,35 @@ export function ColdStart() {
             <div className="lg:sticky lg:top-28">
               <div className="sr-only">Quick setup</div>
               <h1 className="mt-4 font-display text-3xl leading-[1.1] tracking-tight text-text sm:text-5xl sm:leading-[1.05]">
-                Let&apos;s find your{" "}
-                <span className="italic">quiet confidence</span>.
+                I&apos;m Gira, your AI-Powered personal stylist.
               </h1>
+              <p className="mt-4 text-sm leading-relaxed text-text/70 sm:text-base">
+                Let&apos;s find your quiet confidence through curated looks that truly
+                understand your taste, for every occasion.
+              </p>
 
-                {showProgress ? (
-                  <Surface tone="subtle" className="mt-8 p-6" aria-live="polite">
-                    <div className="flex items-end justify-between gap-6">
-                      <div className="sr-only">Progress</div>
-                      <div className="text-xs font-semibold text-text sm:text-sm">
-                        {currentStep} / {totalSteps}
-                      </div>
+              {showProgress ? (
+                <Surface tone="subtle" className="mt-8 p-6" aria-live="polite">
+                  <div className="flex items-end justify-between gap-6">
+                    <div className="sr-only">Progress</div>
+                    <div className="text-xs font-semibold text-text sm:text-sm">
+                      {currentStep} / {totalSteps}
                     </div>
+                  </div>
+                  <div
+                    className="mt-4 h-2 w-full rounded-full bg-glass-highlight/20"
+                    role="progressbar"
+                    aria-label="Quiz progress"
+                  >
                     <div
-                      className="mt-4 h-2 w-full rounded-full bg-glass-highlight/20"
-                      role="progressbar"
-                      aria-label="Quiz progress"
-                    >
-                      <div
-                        className="h-2 rounded-full bg-gold transition-[width] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
-                        style={{
-                          width: `${(currentStep / totalSteps) * 100}%`,
-                        }}
-                      />
-                    </div>
-                  </Surface>
-                ) : null}
+                      className="h-2 rounded-full bg-gold transition-[width] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+                      style={{
+                        width: `${(currentStep / totalSteps) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </Surface>
+              ) : null}
             </div>
           </div>
 
