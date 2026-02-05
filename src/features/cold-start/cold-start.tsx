@@ -305,7 +305,7 @@ export function ColdStart() {
             <div className="lg:sticky lg:top-28">
               <div className="sr-only">Quick setup</div>
               <h1 className="mt-4 font-display text-3xl leading-[1.1] tracking-tight text-text sm:text-5xl sm:leading-[1.05]">
-                I&apos;m <span className="font-semibold">Gira</span>,
+                I&apos;m Gira,
                 <br />
                 your <span className="italic">AI-Powered</span> personal stylist.
               </h1>
