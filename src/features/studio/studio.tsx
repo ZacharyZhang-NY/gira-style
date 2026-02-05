@@ -925,7 +925,7 @@ export function Studio() {
         id: "intro",
         role: "assistant" as const,
         heading: "",
-        text: "Hi! I'm Gira. Ready to refresh your look? Tell me what can I help you style today?\n\nPro tip: Take a look at the gallery on the left to see what’s trending with others right now.",
+        text: "Hi! I'm Gira. Ready to refresh your look? Tell me what can I help you style today?\n\n💡 Pro tip: Take a look at the gallery on the left to see what’s trending with others right now.",
         highlight: !versions.length && !isGenerating,
       },
     ];
