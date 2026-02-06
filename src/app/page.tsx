@@ -1,5 +1,9 @@
-import { redirect } from "next/navigation";
+import { Landing } from "@/features/landing/landing";
 
 export default function Home() {
-  redirect("/start");
+  return (
+    <div className="font-jost">
+      <Landing />
+    </div>
+  );
 }
