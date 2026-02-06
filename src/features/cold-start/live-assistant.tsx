@@ -18,7 +18,6 @@ const VAD_CHECK_INTERVAL_MS = 200;
 const VAD_SILENCE_MS = 1000;
 const VAD_MIN_RMS = 0.015;
 const FINALIZE_GRACE_MS = 10_000;
-const PLAYBACK_LEAD_SECONDS = 0.06;
 const END_PHRASE_HINTS = [
   "this has been so helpful",
   "good sense of your style",
@@ -568,9 +567,8 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     src.buffer = audioBuffer;
     src.connect(ctx.destination);
     const now = ctx.currentTime;
-    const targetStart = now + PLAYBACK_LEAD_SECONDS;
-    if (nextPlayTimeRef.current < targetStart) {
-      nextPlayTimeRef.current = targetStart;
+    if (nextPlayTimeRef.current < now) {
+      nextPlayTimeRef.current = now;
     }
     src.start(nextPlayTimeRef.current);
     nextPlayTimeRef.current += audioBuffer.duration;
