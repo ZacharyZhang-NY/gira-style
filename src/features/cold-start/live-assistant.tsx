@@ -18,6 +18,7 @@ const VAD_CHECK_INTERVAL_MS = 200;
 const VAD_SILENCE_MS = 1000;
 const VAD_MIN_RMS = 0.015;
 const FINALIZE_GRACE_MS = 10_000;
+const PLAYBACK_LEAD_SECONDS = 0.06;
 const END_PHRASE_HINTS = [
   "this has been so helpful",
   "good sense of your style",
@@ -107,12 +108,37 @@ function parseSampleRate(mimeType?: string, fallback = 24000) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseChannels(mimeType?: string, fallback = 1) {
+  if (!mimeType) return fallback;
+  const match = mimeType.match(/channels\s*=\s*(\d+)/i);
+  if (!match) return fallback;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function isWavMimeType(mimeType: string) {
   return (
     mimeType.includes("audio/wav") ||
     mimeType.includes("audio/wave") ||
     mimeType.includes("audio/x-wav")
   );
+}
+
+function isLikelyRawPcmMimeType(mimeType: string) {
+  return (
+    mimeType.includes("audio/pcm") ||
+    mimeType.includes("audio/l16") ||
+    mimeType.includes("audio/raw")
+  );
+}
+
+function isLittleEndianPcm(mimeType: string) {
+  if (!mimeType) return true;
+  if (/endianness\s*=\s*big/i.test(mimeType)) return false;
+  if (/endianness\s*=\s*little/i.test(mimeType)) return true;
+  // RFC audio/L16 defaults to big-endian network byte order.
+  if (mimeType.includes("audio/l16")) return false;
+  return true;
 }
 
 function isWavHeader(bytes: Uint8Array) {
@@ -131,19 +157,26 @@ function isWavHeader(bytes: Uint8Array) {
 
 function pcm16ToAudioBuffer(
   ctx: AudioContext,
-  buffer: ArrayBuffer,
+  bytes: Uint8Array,
   sampleRate: number,
+  channels: number,
+  littleEndian: boolean,
 ) {
-  const bytes = new Uint8Array(buffer);
-  const sampleCount = Math.floor(bytes.length / 2);
-  const float32 = new Float32Array(sampleCount);
-  const view = new DataView(buffer);
-  for (let i = 0; i < sampleCount; i += 1) {
-    const val = view.getInt16(i * 2, true);
-    float32[i] = val / 0x8000;
+  const safeChannels = Math.max(1, Math.floor(channels || 1));
+  const totalSamples = Math.floor(bytes.length / 2);
+  const frameCount = Math.floor(totalSamples / safeChannels);
+  const audioBuffer = ctx.createBuffer(safeChannels, frameCount, sampleRate);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  for (let channel = 0; channel < safeChannels; channel += 1) {
+    const channelData = audioBuffer.getChannelData(channel);
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const sampleIndex = frame * safeChannels + channel;
+      const val = view.getInt16(sampleIndex * 2, littleEndian);
+      channelData[frame] = val / 0x8000;
+    }
   }
-  const audioBuffer = ctx.createBuffer(1, sampleCount, sampleRate);
-  audioBuffer.copyToChannel(float32, 0);
+
   return audioBuffer;
 }
 
@@ -164,10 +197,12 @@ function downsampleBuffer(buffer: Float32Array, inputRate: number, outputRate: n
     const start = Math.floor(i * ratio);
     const end = Math.floor((i + 1) * ratio);
     let sum = 0;
+    let count = 0;
     for (let j = start; j < end && j < buffer.length; j++) {
       sum += buffer[j];
+      count += 1;
     }
-    result[i] = sum / (end - start);
+    result[i] = count ? sum / count : 0;
   }
   return result;
 }
@@ -234,6 +269,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const streamRef = React.useRef<MediaStream | null>(null);
   const sourceRef = React.useRef<MediaStreamAudioSourceNode | null>(null);
   const processorRef = React.useRef<ScriptProcessorNode | null>(null);
+  const processorSinkRef = React.useRef<GainNode | null>(null);
   const playContextRef = React.useRef<AudioContext | null>(null);
   const playQueueRef = React.useRef<Array<{ audio: string; mime: string }>>([]);
   const isPlayingRef = React.useRef(false);
@@ -264,6 +300,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const sendAudioChunk = React.useCallback((int16: Int16Array) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (waitingForResponseRef.current) return;
     // Don't send audio after end_of_turn has been sent
     if (endOfTurnSentRef.current) return;
     ws.send(JSON.stringify({
@@ -346,8 +383,14 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
       // Create processor
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
+      const processorSink = ctx.createGain();
+      processorSink.gain.value = 0;
+      processorSinkRef.current = processorSink;
 
       processor.onaudioprocess = (event) => {
+        if (waitingForResponseRef.current || isPlayingRef.current || playQueueRef.current.length > 0) {
+          return;
+        }
         const inputBuffer = event.inputBuffer.getChannelData(0);
         const rms = computeRms(inputBuffer);
 
@@ -360,7 +403,6 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
         if (rms >= VAD_MIN_RMS) {
           voiceStartedRef.current = true;
           lastVoiceAtRef.current = Date.now();
-          endOfTurnSentRef.current = false;
         }
 
         // Downsample and send
@@ -371,7 +413,8 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
 
       // Connect: source -> processor -> destination
       source.connect(processor);
-      processor.connect(ctx.destination);
+      processor.connect(processorSink);
+      processorSink.connect(ctx.destination);
 
       // Start VAD
       startVadLoop();
@@ -395,6 +438,10 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
+    }
+    if (processorSinkRef.current) {
+      processorSinkRef.current.disconnect();
+      processorSinkRef.current = null;
     }
     if (sourceRef.current) {
       sourceRef.current.disconnect();
@@ -464,7 +511,7 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     maybeComplete();
   }, [maybeComplete, stopMicPipeline]);
 
-  // Play audio chunk - Gemini Live API returns raw PCM 24kHz 16-bit little-endian
+  // Play audio chunk. Prefer browser decoder for encoded audio, fallback to PCM16.
   const playAudioChunk = React.useCallback(async (audioB64: string, mimeType?: string) => {
     if (!playContextRef.current) {
       playContextRef.current = new AudioContext();
@@ -478,10 +525,13 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
     const normalizedMime = normalizeMimeType(mimeType);
     let audioBuffer: AudioBuffer | null = null;
     const bytes = new Uint8Array(buffer);
-    const shouldDecodeWav =
-      (normalizedMime && isWavMimeType(normalizedMime)) || isWavHeader(bytes);
+    const mimeLooksRawPcm = normalizedMime ? isLikelyRawPcmMimeType(normalizedMime) : false;
+    const shouldTryDecode =
+      !mimeLooksRawPcm ||
+      (normalizedMime && isWavMimeType(normalizedMime)) ||
+      isWavHeader(bytes);
 
-    if (shouldDecodeWav) {
+    if (shouldTryDecode) {
       try {
         audioBuffer = await ctx.decodeAudioData(buffer.slice(0));
       } catch {
@@ -491,6 +541,8 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
 
     if (!audioBuffer) {
       const sampleRate = parseSampleRate(normalizedMime, 24000);
+      const channels = parseChannels(normalizedMime, 1);
+      const littleEndian = isLittleEndianPcm(normalizedMime);
       let pcmBytes = new Uint8Array(buffer);
       if (pendingPcmByteRef.current) {
         const pending = pendingPcmByteRef.current;
@@ -500,19 +552,25 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
         pcmBytes = merged;
         pendingPcmByteRef.current = null;
       }
-      if (pcmBytes.length % 2 !== 0) {
-        pendingPcmByteRef.current = pcmBytes.slice(pcmBytes.length - 1);
-        pcmBytes = pcmBytes.slice(0, pcmBytes.length - 1);
+      const frameBytes = Math.max(2, channels * 2);
+      const remainder = pcmBytes.length % frameBytes;
+      if (remainder !== 0) {
+        pendingPcmByteRef.current = pcmBytes.slice(pcmBytes.length - remainder);
+        pcmBytes = pcmBytes.slice(0, pcmBytes.length - remainder);
       }
-      audioBuffer = pcm16ToAudioBuffer(ctx, pcmBytes.buffer, sampleRate);
+      if (pcmBytes.length === 0) {
+        return;
+      }
+      audioBuffer = pcm16ToAudioBuffer(ctx, pcmBytes, sampleRate, channels, littleEndian);
     }
 
     const src = ctx.createBufferSource();
     src.buffer = audioBuffer;
     src.connect(ctx.destination);
     const now = ctx.currentTime;
-    if (nextPlayTimeRef.current < now) {
-      nextPlayTimeRef.current = now;
+    const targetStart = now + PLAYBACK_LEAD_SECONDS;
+    if (nextPlayTimeRef.current < targetStart) {
+      nextPlayTimeRef.current = targetStart;
     }
     src.start(nextPlayTimeRef.current);
     nextPlayTimeRef.current += audioBuffer.duration;
@@ -556,7 +614,9 @@ export function LiveAssistant({ onComplete, onBack }: LiveAssistantProps) {
   const handleMessage = React.useCallback((event: MessageEvent) => {
     try {
       const msg = JSON.parse(event.data);
-      console.log("[LiveAssistant] Received message type:", msg.type);
+      if (msg.type !== "assistant_audio") {
+        console.log("[LiveAssistant] Received message type:", msg.type);
+      }
 
       if (msg.type === "ready") {
         setStatus("ready");
