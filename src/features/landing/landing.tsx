@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
+import { ShaderBackground } from "@/components/ui/shaders-hero-section";
 import { Surface } from "@/components/ui/surface";
 import { CommunityLooks } from "@/features/studio/components/community-looks";
 import { fetchCommunityLooks, updateCommunityFeedback } from "@/features/studio/api";
@@ -210,55 +211,55 @@ export function Landing() {
       </header>
 
       <main className="mx-auto max-w-7xl px-6 pb-20 pt-10">
-        <section
-          id="hero"
-          className="grid min-h-[calc(100svh-13.5rem)] items-center gap-10 scroll-mt-28 lg:grid-cols-[minmax(0,1.06fr)_minmax(0,0.94fr)]"
-        >
-          <div className="lg:col-start-1 lg:row-start-1">
-            <Reveal delay={0.08}>
-              <h1 className="mt-5 font-display text-5xl leading-[0.98] tracking-tight text-text sm:text-6xl lg:text-7xl">
-                I&apos;m Gira,
-                <br />
-                your AI-Powered personal stylist.
-              </h1>
-            </Reveal>
+        <section id="hero" className="scroll-mt-28">
+          <ShaderBackground className="min-h-[calc(100svh-13.5rem)] rounded-[2.25rem]">
+            <div className="grid min-h-[calc(100svh-13.5rem)] items-center gap-10 p-6 sm:p-8 lg:grid-cols-[minmax(0,1.06fr)_minmax(0,0.94fr)]">
+              <div className="lg:col-start-1 lg:row-start-1">
+                <Reveal delay={0.08}>
+                  <h1 className="mt-5 font-display text-5xl leading-[0.98] tracking-tight text-text sm:text-6xl lg:text-7xl">
+                    I&apos;m Gira,
+                    <br />
+                    your AI-Powered personal stylist.
+                  </h1>
+                </Reveal>
 
-            <Reveal delay={0.14}>
-              <p className="mt-6 max-w-[56ch] text-base leading-relaxed text-muted">
-                Let&apos;s find your quiet confidence through curated looks that truly understand your taste, for every
-                occasion.
-              </p>
-            </Reveal>
-          </div>
+                <Reveal delay={0.14}>
+                  <p className="mt-6 max-w-[56ch] text-base leading-relaxed text-muted">
+                    Let&apos;s find your quiet confidence through curated looks that truly understand your taste, for every
+                    occasion.
+                  </p>
+                </Reveal>
+              </div>
 
-          <Reveal delay={0.12} className="lg:col-start-2 lg:row-start-1">
-            <motion.div
-              onMouseMove={handlePreviewMove}
-              onMouseLeave={resetPreviewTilt}
-              onBlur={resetPreviewTilt}
-              style={
-                shouldReduceMotion
-                  ? undefined
-                  : {
-                      rotateX,
-                      rotateY,
-                      transformPerspective: 900,
-                    }
-              }
-              className="rounded-3xl"
-            >
-              <Button
-                onClick={goStart}
-                className="h-32 w-full rounded-3xl text-2xl tracking-[0.2em] sm:h-36 sm:text-3xl"
-              >
-                <span className="inline-flex items-center gap-4 whitespace-nowrap">
-                  PLAYGROUND
-                  <ArrowRight className="h-7 w-7 opacity-90" aria-hidden="true" />
-                </span>
-              </Button>
-            </motion.div>
-          </Reveal>
-
+              <Reveal delay={0.12} className="lg:col-start-2 lg:row-start-1">
+                <motion.div
+                  onMouseMove={handlePreviewMove}
+                  onMouseLeave={resetPreviewTilt}
+                  onBlur={resetPreviewTilt}
+                  style={
+                    shouldReduceMotion
+                      ? undefined
+                      : {
+                          rotateX,
+                          rotateY,
+                          transformPerspective: 900,
+                        }
+                  }
+                  className="rounded-3xl"
+                >
+                  <Button
+                    onClick={goStart}
+                    className="h-32 w-full rounded-3xl text-2xl tracking-[0.2em] sm:h-36 sm:text-3xl"
+                  >
+                    <span className="inline-flex items-center gap-4 whitespace-nowrap">
+                      PLAYGROUND
+                      <ArrowRight className="h-7 w-7 opacity-90" aria-hidden="true" />
+                    </span>
+                  </Button>
+                </motion.div>
+              </Reveal>
+            </div>
+          </ShaderBackground>
         </section>
 
         <section id="social-proof" className="pt-16 scroll-mt-28">
