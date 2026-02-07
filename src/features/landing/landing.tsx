@@ -249,7 +249,6 @@ export function Landing() {
             >
               <Button
                 onClick={goStart}
-                size="lg"
                 className="h-32 w-full rounded-3xl text-2xl tracking-[0.2em] sm:h-36 sm:text-3xl"
               >
                 <span className="inline-flex items-center gap-4 whitespace-nowrap">
