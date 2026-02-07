@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  AnimatePresence,
   motion,
   useMotionValue,
   useMotionValueEvent,
@@ -9,7 +8,7 @@ import {
   useScroll,
   useTransform,
 } from "framer-motion";
-import { ArrowRight, CheckCircle2, Compass, SlidersHorizontal, Sparkles } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
@@ -26,39 +25,6 @@ import { readLocalStorageJson, writeLocalStorageJson } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
 import { LiquidPointer } from "./liquid-pointer";
-
-const INTENTS = [
-  {
-    label: "Work polish",
-    summary: "Structured lines, clean layering, calm finish.",
-  },
-  {
-    label: "Evening sharp",
-    summary: "Higher contrast, subtle shine, refined silhouette.",
-  },
-  {
-    label: "Weekend ease",
-    summary: "Soft textures, relaxed structure, minimal noise.",
-  },
-] as const;
-
-const FLOW = [
-  {
-    title: "Describe context",
-    body: "Occasion, mood, and constraints in one clear input.",
-    icon: Compass,
-  },
-  {
-    title: "Curate quickly",
-    body: "Focused recommendations, no cluttered decision tree.",
-    icon: Sparkles,
-  },
-  {
-    title: "Refine live",
-    body: "Micro-adjust tone and detail until it feels right.",
-    icon: SlidersHorizontal,
-  },
-] as const;
 
 type StoredCommunityVoter = {
   id: string;
@@ -109,56 +75,11 @@ function Reveal({
   );
 }
 
-function FlowCard({
-  title,
-  body,
-  icon: Icon,
-  active,
-  onHover,
-}: {
-  title: string;
-  body: string;
-  icon: React.ComponentType<{ className?: string }>;
-  active: boolean;
-  onHover: () => void;
-}) {
-  const shouldReduceMotion = useReducedMotion();
-
-  return (
-    <motion.article
-      whileHover={shouldReduceMotion ? undefined : { y: -4 }}
-      whileTap={shouldReduceMotion ? undefined : { scale: 0.995 }}
-      transition={luxTween(shouldReduceMotion, 0.28)}
-      onMouseEnter={onHover}
-      className={cn(
-        "rounded-2xl p-5 ui-glass-subtle",
-        active && "shadow-lux-md",
-      )}
-    >
-      <div className="flex items-start gap-4">
-        <motion.span
-          whileHover={shouldReduceMotion ? undefined : { rotate: -6, scale: 1.05 }}
-          transition={luxTween(shouldReduceMotion, 0.22)}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-glass-highlight/25 text-text"
-        >
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </motion.span>
-        <div className="min-w-0">
-          <h3 className="font-display text-2xl leading-tight tracking-tight text-text">{title}</h3>
-          <p className="mt-2 text-base leading-relaxed text-muted">{body}</p>
-        </div>
-      </div>
-    </motion.article>
-  );
-}
-
 export function Landing() {
   const router = useRouter();
   const shouldReduceMotion = useReducedMotion();
   const { scrollY } = useScroll();
 
-  const [activeIntent, setActiveIntent] = React.useState(0);
-  const [activeFlow, setActiveFlow] = React.useState(0);
   const [scrolled, setScrolled] = React.useState(false);
   const [communityLooks, setCommunityLooks] = React.useState<CommunityLook[]>([]);
   const [communityVoterId, setCommunityVoterId] = React.useState<string | null>(null);
@@ -173,8 +94,6 @@ export function Landing() {
     if (shouldReduceMotion) return;
     setScrolled(v > 8);
   });
-
-  const progressWidth = `${((activeFlow + 1) / FLOW.length) * 100}%`;
 
   const goStart = React.useCallback(() => {
     router.push("/start");
@@ -285,19 +204,16 @@ export function Landing() {
 
             <div className="flex items-center gap-3">
               <ThemeToggle className="hidden sm:inline-flex" />
-              <Button onClick={goStart} className="px-5 whitespace-nowrap">
-                <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                  Playground
-                  <ArrowRight className="h-4 w-4 opacity-80" aria-hidden="true" />
-                </span>
-              </Button>
             </div>
           </motion.div>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl px-6 pb-20 pt-10">
-        <section id="hero" className="grid items-start gap-10 pt-8 scroll-mt-28 lg:grid-cols-[minmax(0,1.06fr)_minmax(0,0.94fr)] lg:pt-12">
+        <section
+          id="hero"
+          className="grid min-h-[calc(100svh-13.5rem)] items-center gap-10 scroll-mt-28 lg:grid-cols-[minmax(0,1.06fr)_minmax(0,0.94fr)]"
+        >
           <div className="lg:col-start-1 lg:row-start-1">
             <Reveal delay={0.08}>
               <h1 className="mt-5 font-display text-5xl leading-[0.98] tracking-tight text-text sm:text-6xl lg:text-7xl">
@@ -331,135 +247,19 @@ export function Landing() {
               }
               className="rounded-3xl"
             >
-              <Surface tone="glass" className="rounded-3xl p-6 sm:p-7">
-                <div className="space-y-4">
-                  {FLOW.map((item, index) => (
-                    <motion.div
-                      key={item.title}
-                      whileHover={shouldReduceMotion ? undefined : { x: 3 }}
-                      whileTap={shouldReduceMotion ? undefined : { scale: 0.995 }}
-                      transition={luxTween(shouldReduceMotion, 0.2)}
-                      className={cn(
-                        "flex items-center justify-between gap-4 rounded-2xl px-4 py-3 ui-glass-subtle",
-                        activeFlow === index && "shadow-lux-md",
-                      )}
-                      onMouseEnter={() => setActiveFlow(index)}
-                    >
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-text">{item.title}</div>
-                      </div>
-                      <motion.span
-                        animate={shouldReduceMotion || activeFlow !== index ? undefined : { scale: [1, 1.07, 1] }}
-                        transition={shouldReduceMotion ? { duration: 0 } : { duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-                      >
-                        <CheckCircle2 className="h-4 w-4 text-gold" aria-hidden="true" />
-                      </motion.span>
-                    </motion.div>
-                  ))}
-                </div>
-
-                <div className="mt-5">
-                  <div className="mb-2 flex items-center justify-between text-sm font-medium text-muted">
-                    <span>Step</span>
-                    <span>{activeFlow + 1} / {FLOW.length}</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-glass-highlight/20">
-                    <motion.div
-                      className="h-2 rounded-full bg-gold"
-                      animate={{ width: progressWidth }}
-                      transition={luxTween(shouldReduceMotion, 0.28)}
-                    />
-                  </div>
-                </div>
-              </Surface>
+              <Button
+                onClick={goStart}
+                size="lg"
+                className="h-32 w-full rounded-3xl text-2xl tracking-[0.2em] sm:h-36 sm:text-3xl"
+              >
+                <span className="inline-flex items-center gap-4 whitespace-nowrap">
+                  PLAYGROUND
+                  <ArrowRight className="h-7 w-7 opacity-90" aria-hidden="true" />
+                </span>
+              </Button>
             </motion.div>
           </Reveal>
 
-          <div className="lg:col-start-1 lg:row-start-2 lg:self-center">
-            <Reveal delay={0.2}>
-              <div className="mt-8 flex flex-wrap gap-2 lg:mt-0">
-                {INTENTS.map((intent, index) => {
-                  const selected = activeIntent === index;
-                  return (
-                    <motion.button
-                      key={intent.label}
-                      type="button"
-                      onClick={() => setActiveIntent(index)}
-                      whileHover={shouldReduceMotion ? undefined : { y: -2 }}
-                      whileTap={shouldReduceMotion ? undefined : { scale: 0.98 }}
-                      transition={luxTween(shouldReduceMotion, 0.18)}
-                      aria-pressed={selected}
-                      className={cn(
-                        "rounded-full px-4 py-2 text-sm font-semibold",
-                        "transition-[box-shadow,background,color] duration-300",
-                        selected ? "bg-text text-bg shadow-lux-md" : "ui-glass-subtle text-text",
-                      )}
-                    >
-                      {intent.label}
-                    </motion.button>
-                  );
-                })}
-              </div>
-            </Reveal>
-
-            <Reveal delay={0.24}>
-              <Surface tone="subtle" className="mt-4 rounded-2xl p-4 lg:hidden">
-                <AnimatePresence mode="wait">
-                  <motion.p
-                    key={INTENTS[activeIntent].label}
-                    initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -8 }}
-                    transition={luxTween(shouldReduceMotion, 0.24)}
-                    className="text-sm leading-relaxed text-muted"
-                  >
-                    {INTENTS[activeIntent].summary}
-                  </motion.p>
-                </AnimatePresence>
-              </Surface>
-            </Reveal>
-          </div>
-
-          <Reveal delay={0.16} className="hidden lg:block lg:col-start-2 lg:row-start-2 lg:self-center">
-            <Surface tone="subtle" className="rounded-2xl p-4">
-              <AnimatePresence mode="wait">
-                <motion.p
-                  key={`desktop-${INTENTS[activeIntent].label}`}
-                  initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -8 }}
-                  transition={luxTween(shouldReduceMotion, 0.24)}
-                  className="text-sm leading-relaxed text-muted"
-                >
-                  {INTENTS[activeIntent].summary}
-                </motion.p>
-              </AnimatePresence>
-            </Surface>
-          </Reveal>
-        </section>
-
-        <section id="benefits" className="pt-16 scroll-mt-28">
-          <Reveal>
-            <div>
-              <h2 className="mt-3 font-display text-4xl leading-[1.02] tracking-tight text-text">
-                What you get from the workflow.
-              </h2>
-            </div>
-          </Reveal>
-
-          <div className="mt-8 grid gap-4 md:grid-cols-3">
-            {FLOW.map((item, index) => (
-              <Reveal key={item.title} delay={0.04 * index}>
-                <FlowCard
-                  title={item.title}
-                  body={item.body}
-                  icon={item.icon}
-                  active={activeFlow === index}
-                  onHover={() => setActiveFlow(index)}
-                />
-              </Reveal>
-            ))}
-          </div>
         </section>
 
         <section id="social-proof" className="pt-16 scroll-mt-28">
