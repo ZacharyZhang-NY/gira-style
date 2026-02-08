@@ -421,7 +421,18 @@ export function ColdStart() {
                               ? "Describe your style in one sentence."
                               : isZipStep
                                 ? "What’s your zip code?"
-                                : question?.title}
+                                : question
+                                  ? (
+                                    <>
+                                      {question.title}
+                                      {question.multi ? (
+                                        <span className="mt-1 block text-xs font-medium text-text/70 sm:text-sm">
+                                          (select all that applies)
+                                        </span>
+                                      ) : null}
+                                    </>
+                                  )
+                                  : null}
                           </h2>
                         </div>
                       </div>
