@@ -1947,6 +1947,12 @@ def fetch_community_looks():
         return jsonify({'error': 'Database not configured.'}), 500
     try:
         voter_id = normalize_uuid(request.args.get('voterId') or request.args.get('voter_id'))
+        mode = request.args.get('mode', '')
+        page_size = min(int(request.args.get('page_size', '100')), 200) if mode == 'feed' else None
+
+        if mode == 'feed':
+            return _fetch_community_looks_feed(voter_id, page_size)
+
         with get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -2064,6 +2070,77 @@ def fetch_community_looks():
         return jsonify({"looks": looks})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+def _fetch_community_looks_feed(voter_id, page_size):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH vote_totals AS (
+                    SELECT
+                        session_id,
+                        turn_index,
+                        COALESCE(SUM(CASE WHEN vote = 'up' THEN 1 ELSE 0 END), 0) AS up_votes,
+                        COALESCE(SUM(CASE WHEN vote = 'down' THEN 1 ELSE 0 END), 0) AS down_votes
+                    FROM session_turn_votes
+                    GROUP BY session_id, turn_index
+                ),
+                viewer_vote AS (
+                    SELECT session_id, turn_index, vote AS viewer_vote
+                    FROM session_turn_votes
+                    WHERE voter_id = %s
+                )
+                SELECT
+                    st.session_id,
+                    st.turn_index,
+                    st.feedback,
+                    st.image_url,
+                    st.image_key,
+                    st.created_at,
+                    COALESCE(vt.up_votes, 0) AS up_votes,
+                    COALESCE(vt.down_votes, 0) AS down_votes,
+                    COALESCE(vt.up_votes, 0) + CASE WHEN st.feedback = 'up' THEN 1 ELSE 0 END AS total_up,
+                    COALESCE(vt.down_votes, 0) + CASE WHEN st.feedback = 'down' THEN 1 ELSE 0 END AS total_down,
+                    vv.viewer_vote
+                FROM session_turns st
+                LEFT JOIN vote_totals vt
+                    ON vt.session_id = st.session_id AND vt.turn_index = st.turn_index
+                LEFT JOIN viewer_vote vv
+                    ON vv.session_id = st.session_id AND vv.turn_index = st.turn_index
+                WHERE (st.image_url IS NOT NULL OR st.image_key IS NOT NULL)
+                ORDER BY st.created_at DESC
+                LIMIT %s
+                """,
+                (voter_id, page_size)
+            )
+            rows = cur.fetchall()
+
+    looks = []
+    for session_id, turn_index, feedback, image_url, image_key, created_at, up_votes, down_votes, total_up, total_down, viewer_vote in rows:
+        resolved_url = None
+        if image_key:
+            try:
+                resolved_url = build_signed_r2_url(image_key)
+            except Exception:
+                resolved_url = build_r2_url(image_key)
+        if not resolved_url:
+            resolved_url = image_url
+        if not resolved_url:
+            continue
+        looks.append(
+            {
+                "sessionId": str(session_id),
+                "turnIndex": int(turn_index),
+                "imageUrl": resolved_url,
+                "feedback": feedback or "",
+                "upVotes": int(total_up or 0),
+                "downVotes": int(total_down or 0),
+                "viewerFeedback": viewer_vote or "",
+            }
+        )
+
+    return jsonify({"looks": looks})
 
 
 def is_follow_up_request(user_input):
